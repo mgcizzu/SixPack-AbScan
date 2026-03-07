@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import atexit
 from datetime import datetime
 import os
 from pathlib import Path
 import socket
 from typing import Generator
+import shutil
 
 import gradio as gr
 import pandas as pd
@@ -20,6 +22,9 @@ from sixpack_abscan import (
     write_six_frame_fasta_with_progress,
 )
 
+RUNS_DIR = Path("runs")
+_SESSION_RUN_DIRS: set[Path] = set()
+
 
 def _find_free_port(start: int = 7860, end: int = 7870) -> int:
     for port in range(start, end + 1):
@@ -31,6 +36,25 @@ def _find_free_port(start: int = 7860, end: int = 7870) -> int:
                 continue
             return port
     raise RuntimeError(f"No free port found in range {start}-{end}.")
+
+
+def _cleanup_previous_runs() -> None:
+    if not RUNS_DIR.exists():
+        return
+    for entry in RUNS_DIR.iterdir():
+        if entry.is_dir() and entry.name.startswith("run_"):
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def _cleanup_session_runs() -> None:
+    for run_dir in list(_SESSION_RUN_DIRS):
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
+if os.getenv("CLEANUP_RUNS_ON_START", "1") == "1":
+    _cleanup_previous_runs()
+if os.getenv("CLEANUP_RUNS_ON_EXIT", "1") == "1":
+    atexit.register(_cleanup_session_runs)
 
 
 def _run_scan(
@@ -61,6 +85,7 @@ def _run_scan(
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path("runs") / f"run_{run_id}"
+    _SESSION_RUN_DIRS.add(output_dir)
 
     epitope_df = read_epitope_table(epitope_path, epitope_separator)
     if epitope_column not in epitope_df.columns:
