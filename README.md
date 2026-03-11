@@ -88,6 +88,23 @@ docker run --rm -p 7860:7860 sixpack-abscan:local
    - Triggers on pushes to `main`, version tags (`v*`), and manual dispatch.
    - Publishes image tags to `ghcr.io/<owner>/<repo>`.
 
+## Deploy To SciLifeLab Serve
+
+After pushing this repository to GitHub and letting the GHCR workflow publish an image, create the app in Serve with:
+
+- Application type: `Gradio`
+- Container image: `ghcr.io/<owner>/<repo>:latest`
+- Port: `7860`
+- Health path: `/`
+
+This app already supports the typical Serve runtime settings:
+
+- `HOST=0.0.0.0`
+- `PORT=7860`
+- optional `ROOT_PATH` for reverse-proxy mounting
+
+The container runs as a non-root user and stores temporary uploads and run outputs in writable app-owned directories.
+
 ## Outputs
 
 Written to `--output-dir`:

@@ -24,6 +24,33 @@ from sixpack_abscan import (
 
 RUNS_DIR = Path("runs")
 _SESSION_RUN_DIRS: set[Path] = set()
+APP_CSS = """
+.gradio-container {
+    font-size: 18px;
+}
+
+.gradio-container h1 {
+    font-size: 2.4rem;
+}
+
+.gradio-container h2,
+.gradio-container h3 {
+    font-size: 1.5rem;
+}
+
+.gradio-container label,
+.gradio-container .prose,
+.gradio-container .gr-markdown,
+.gradio-container .gr-button,
+.gradio-container input,
+.gradio-container textarea,
+.gradio-container table,
+.gradio-container select,
+.gradio-container .wrap,
+.gradio-container .message {
+    font-size: 1.05rem;
+}
+"""
 
 
 def _find_free_port(start: int = 7860, end: int = 7870) -> int:
@@ -236,11 +263,34 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(title="SixPack-AbScan") as app:
+    with gr.Blocks(title="SixPack-AbScan", css=APP_CSS) as app:
         gr.Markdown(
             "# SixPack-AbScan\n"
             "Interactive epitope matching for antibody cross-reactivity prediction."
         )
+
+        gr.Markdown("### Antibody information")
+
+        with gr.Row():
+            epitope_file = gr.File(
+                label="Upload here your file with the list of epitopes to search",
+                file_count="single",
+                type="filepath",
+            )
+
+        with gr.Row():
+            epitope_column = gr.Dropdown(
+                label="Epitope column",
+                choices=[],
+                value=None,
+                interactive=False,
+            )
+            epitope_separator = gr.Textbox(
+                label="CSV/TSV separator",
+                value=";",
+            )
+
+        gr.Markdown("### Crossreactivity prediction")
 
         with gr.Row():
             input_mode = gr.Radio(
@@ -249,7 +299,7 @@ def build_app() -> gr.Blocks:
                     "Protein FASTA (precomputed proteome)",
                 ],
                 value="Nucleotide FASTA (will be 6-frame translated automatically)",
-                label="What do you want to predict cross reactivity on?",
+                label="On which file type you want to perform the search?",
             )
 
         with gr.Row():
@@ -262,23 +312,6 @@ def build_app() -> gr.Blocks:
                 label="Protein FASTA",
                 file_count="single",
                 type="filepath",
-            )
-
-        with gr.Row():
-            epitope_file = gr.File(
-                label="Epitope file (CSV/TSV/XLSX)",
-                file_count="single",
-                type="filepath",
-            )
-            epitope_column = gr.Dropdown(
-                label="Epitope column",
-                choices=[],
-                value=None,
-                interactive=False,
-            )
-            epitope_separator = gr.Textbox(
-                label="CSV/TSV separator",
-                value=";",
             )
 
         run_button = gr.Button("Run Scan", variant="primary")

@@ -5,15 +5,23 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 ENV PORT=7860
 ENV HOST=0.0.0.0
+ENV USER=appuser
+ENV HOME=/home/appuser
+ENV GRADIO_TEMP_DIR=/home/appuser/app/temp
 
-WORKDIR /app
+RUN useradd -m -u 1000 $USER
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip && pip install -r /app/requirements.txt
+WORKDIR $HOME/app
 
-COPY . /app
+COPY requirements.txt $HOME/app/requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-RUN mkdir -p /app/runs
+COPY . $HOME/app
+
+RUN mkdir -p $HOME/app/runs $GRADIO_TEMP_DIR \
+    && chown -R $USER:$USER $HOME
+
+USER $USER
 
 EXPOSE 7860
 
