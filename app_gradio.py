@@ -8,6 +8,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import socket
+import traceback
 from typing import Generator
 import shutil
 
@@ -361,13 +362,38 @@ def build_app() -> gr.Blocks:
     return app
 
 
-if __name__ == "__main__":
+def main() -> None:
     env_port = os.getenv("PORT") or os.getenv("GRADIO_SERVER_PORT")
     server_port = int(env_port) if env_port else _find_free_port()
     server_name = os.getenv("HOST", "0.0.0.0")
     root_path = os.getenv("ROOT_PATH")
-    build_app().launch(
-        server_name=server_name,
-        server_port=server_port,
-        root_path=root_path,
+    print(
+        "Starting SixPack-AbScan",
+        flush=True,
     )
+    print(
+        f"Runtime config: HOST={server_name} PORT={server_port} ROOT_PATH={root_path!r}",
+        flush=True,
+    )
+    print(
+        f"Working directory: {Path.cwd()}",
+        flush=True,
+    )
+    print(
+        f"Runs directory: {RUNS_DIR.resolve()}",
+        flush=True,
+    )
+    try:
+        build_app().launch(
+            server_name=server_name,
+            server_port=server_port,
+            root_path=root_path,
+        )
+    except Exception:
+        print("Application startup failed:", flush=True)
+        traceback.print_exc()
+        raise
+
+
+if __name__ == "__main__":
+    main()
