@@ -25,4 +25,4 @@ USER $USER
 
 EXPOSE 7860
 
-CMD ["python", "app_gradio.py"]
+CMD ["python", "main.py"]
