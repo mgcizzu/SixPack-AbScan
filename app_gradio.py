@@ -52,6 +52,17 @@ APP_CSS = """
     font-size: 1.05rem;
 }
 """
+APP_HEAD = """
+<meta name="description" content="SixPack-AbScan predicts crossreactivity of monoclonal antibodies on non-target species by searching epitope sequences against nucleotide or protein FASTA inputs.">
+<meta property="og:title" content="SixPack-AbScan">
+<meta property="og:description" content="Predict crossreactivity of monoclonal antibodies on non-target species.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://images.unsplash.com/photo-1707863081130-7048e715688f?auto=format&fit=crop&fm=jpg&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&q=60&w=1200">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="SixPack-AbScan">
+<meta name="twitter:description" content="Predict crossreactivity of monoclonal antibodies on non-target species.">
+<meta name="twitter:image" content="https://images.unsplash.com/photo-1707863081130-7048e715688f?auto=format&fit=crop&fm=jpg&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&q=60&w=1200">
+"""
 
 
 def _find_free_port(start: int = 7860, end: int = 7870) -> int:
@@ -264,7 +275,7 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(title="SixPack-AbScan", css=APP_CSS) as app:
+    with gr.Blocks(title="SixPack-AbScan", css=APP_CSS, head=APP_HEAD) as app:
         gr.Markdown(
             "# SixPack-AbScan\n"
             "Interactive epitope matching for antibody cross-reactivity prediction."
@@ -356,6 +367,13 @@ def build_app() -> gr.Blocks:
             fn=_load_epitope_columns,
             inputs=[epitope_file, epitope_separator],
             outputs=[epitope_column],
+        )
+
+        gr.Markdown(
+            "## How to cite this app.\n"
+            "Please cite this web as: Grillo, 2026. SixPack-AbScan: "
+            "predict crossreactivity of monoclonal antibodies on non-target species. "
+            "DOI: https://doi.org/10.82595/scilifelab.4c3a-tp57"
         )
 
     app.queue()
