@@ -194,23 +194,11 @@ def _run_scan(
                 )
         else:
             seq_count = prepared_fasta.record_count
-            yield (
-                (
-                    "Scanning protein FASTA for epitope matches, please wait.\n\n"
-                    f"- FASTA source: `{safe_source_name}`{source_note}\n"
-                    f"- Input protein sequences: `{seq_count}`\n"
-                    f"- Epitopes to scan: `{int(epitope_count)}`"
-                ),
-                empty_df,
-                empty_df,
-                None,
-                None,
-                None,
-            )
 
         output_dir.mkdir(parents=True, exist_ok=True)
         protein_to_scan = translated_output or protein_path
         assert protein_to_scan is not None
+        scan_record_count = seq_count * 6 if translated_output else seq_count
 
         epitope_df = epitope_df.copy()
         epitope_df["epitope_query"] = epitope_df[epitope_column].apply(
@@ -219,28 +207,35 @@ def _run_scan(
         epitope_df = epitope_df.dropna(subset=["epitope_query"])
         unique_epitopes = sorted(set(epitope_df["epitope_query"].tolist()))
 
-        total_hits_so_far = 0
+        yield (
+            (
+                "Scanning translated/protein sequences for epitope matches.\n\n"
+                f"- FASTA source: `{safe_source_name}`{source_note}\n"
+                f"- Protein sequences to scan: `{scan_record_count}`\n"
+                f"- Epitopes to scan: `{len(unique_epitopes)}`"
+            ),
+            empty_df,
+            empty_df,
+            None,
+            None,
+            None,
+        )
+
         hits_df = pd.DataFrame(
             columns=["epitope_query", "target_id", "target_description"]
         )
-        scan_gen = scan_epitopes_with_progress(unique_epitopes, protein_to_scan)
+        scan_gen = scan_epitopes_with_progress(
+            unique_epitopes,
+            protein_to_scan,
+            total_records=scan_record_count,
+        )
         while True:
             try:
-                scanned, total, total_hits_so_far = next(scan_gen)
-                progress((scanned, total), desc="Scanning epitopes")
-                if scanned == 1 or scanned == total or scanned % 10 == 0:
-                    yield (
-                        (
-                            "Scanning translated/protein sequences for epitope matches.\n\n"
-                            f"- Scanned epitopes: `{scanned}/{total}`\n"
-                            f"- Hits found so far: `{total_hits_so_far}`"
-                        ),
-                        empty_df,
-                        empty_df,
-                        None,
-                        None,
-                        None,
-                    )
+                scanned_records, total_records, _hits_so_far = next(scan_gen)
+                progress(
+                    (scanned_records, total_records),
+                    desc="Scanning protein sequences",
+                )
             except StopIteration as stop:
                 hits_df = stop.value
                 break

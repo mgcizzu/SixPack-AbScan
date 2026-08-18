@@ -16,6 +16,9 @@ import pandas as pd
 from Bio import SeqIO
 
 
+MAX_SCAN_PROGRESS_UPDATES = 100
+
+
 GENETIC_CODE = {
     "ATA": "I",
     "ATC": "I",
@@ -179,16 +182,31 @@ def scan_epitopes(epitopes: list[str], protein_fasta: Path) -> pd.DataFrame:
 
 
 def scan_epitopes_with_progress(
-    epitopes: list[str], protein_fasta: Path
+    epitopes: list[str],
+    protein_fasta: Path,
+    *,
+    total_records: int | None = None,
 ) -> Generator[tuple[int, int, int], None, pd.DataFrame]:
-    """Scan epitopes and yield progress as (done, total, hits_so_far)."""
+    """Scan the FASTA once and yield (records_done, total, hits_so_far)."""
+
     hits: list[dict[str, str]] = []
-    total = len(epitopes)
-    for done, epitope in enumerate(epitopes, start=1):
-        for record in SeqIO.parse(str(protein_fasta), "fasta"):
-            target_id = record.id
-            target_description = record.description
-            sequence = str(record.seq).upper()
+    if not epitopes:
+        return pd.DataFrame(hits)
+
+    if total_records is None:
+        total_records = sum(1 for _ in SeqIO.parse(str(protein_fasta), "fasta"))
+
+    update_interval = max(1, total_records // MAX_SCAN_PROGRESS_UPDATES)
+    processed_records = 0
+    last_reported = 0
+
+    for processed_records, record in enumerate(
+        SeqIO.parse(str(protein_fasta), "fasta"), start=1
+    ):
+        target_id = record.id
+        target_description = record.description
+        sequence = str(record.seq).upper()
+        for epitope in epitopes:
             if epitope in sequence:
                 hits.append(
                     {
@@ -197,7 +215,18 @@ def scan_epitopes_with_progress(
                         "target_description": target_description,
                     }
                 )
-        yield done, total, len(hits)
+
+        if (
+            processed_records == 1
+            or processed_records == total_records
+            or processed_records % update_interval == 0
+        ):
+            last_reported = processed_records
+            yield processed_records, total_records, len(hits)
+
+    if processed_records and last_reported != processed_records:
+        yield processed_records, total_records, len(hits)
+
     return pd.DataFrame(hits)
 
 

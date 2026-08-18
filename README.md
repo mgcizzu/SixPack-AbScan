@@ -71,9 +71,10 @@ In the app:
 Gradio displays its native browser-to-server transfer status during uploads. Once
 an upload reaches the server, or while an NCBI file is downloaded, the app reports
 progress for acquisition, gzip decompression, FASTA validation, translation, and
-epitope scanning. Gzipped inputs are expanded into temporary local FASTA files
-because the existing search pipeline expects a normal, seekable path; those
-temporary files are removed after the run.
+epitope scanning. The search streams the prepared protein FASTA once and checks
+all unique epitopes against each record. Gzipped inputs are expanded into
+temporary local FASTA files because the existing search pipeline expects a
+normal, seekable path; those temporary files are removed after the run.
 
 Remote inputs are restricted to HTTPS URLs on `ncbi.nlm.nih.gov` or its
 subdomains. Redirect destinations are revalidated, DNS answers must be public,
