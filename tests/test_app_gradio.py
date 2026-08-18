@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 os.environ["CLEANUP_RUNS_ON_START"] = "0"
 os.environ["CLEANUP_RUNS_ON_EXIT"] = "0"
 
-from app_gradio import build_app  # noqa: E402
+import app_gradio  # noqa: E402
+from app_gradio import NUCLEOTIDE_MODE, _run_scan, build_app  # noqa: E402
 
 
 class GradioAppConfigurationTests(unittest.TestCase):
@@ -63,6 +67,49 @@ class GradioAppConfigurationTests(unittest.TestCase):
                 for dependency in column_dependencies
             )
         )
+
+
+class ScanProgressTests(unittest.TestCase):
+    def test_translation_updates_progress_without_refreshing_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            directory_path = Path(directory)
+            fasta_path = directory_path / "input.fna"
+            fasta_path.write_text(">sequence\nATGGCCATG\n", encoding="utf-8")
+            epitope_path = directory_path / "epitopes.csv"
+            epitope_path.write_text(
+                "epitope_specificity\nMA\n", encoding="utf-8"
+            )
+            progress_descriptions: list[str | None] = []
+
+            def capture_progress(_value: object, *, desc: str | None = None) -> None:
+                progress_descriptions.append(desc)
+
+            with (
+                patch.object(app_gradio, "RUNS_DIR", directory_path / "runs"),
+                patch.object(app_gradio, "_SESSION_RUN_DIRS", set()),
+            ):
+                updates = list(
+                    _run_scan(
+                        NUCLEOTIDE_MODE,
+                        str(fasta_path),
+                        None,
+                        str(epitope_path),
+                        "epitope_specificity",
+                        ";",
+                        progress=capture_progress,
+                    )
+                )
+
+            summaries = [update[0] for update in updates]
+            self.assertTrue(
+                any(
+                    description == "Computing six-frame translation"
+                    for description in progress_descriptions
+                )
+            )
+            self.assertFalse(
+                any("Translated sequences" in summary for summary in summaries)
+            )
 
 
 if __name__ == "__main__":

@@ -192,25 +192,6 @@ def _run_scan(
                     (translated_count, total_count),
                     desc="Computing six-frame translation",
                 )
-                if (
-                    translated_count == 1
-                    or translated_count == total_count
-                    or translated_count % 25 == 0
-                ):
-                    yield (
-                        (
-                            "Computing 6-frame translation, please be patient.\n\n"
-                            "This can take up to 5 minutes for large datasets.\n\n"
-                            f"- FASTA source: `{safe_source_name}`{source_note}\n"
-                            f"- Translated sequences: `{translated_count}/{total_count}`\n"
-                            f"- Epitopes to scan: `{int(epitope_count)}`"
-                        ),
-                        empty_df,
-                        empty_df,
-                        None,
-                        None,
-                        None,
-                    )
         else:
             seq_count = prepared_fasta.record_count
             yield (
