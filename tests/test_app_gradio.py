@@ -53,6 +53,8 @@ class GradioAppConfigurationTests(unittest.TestCase):
         ]
 
         self.assertEqual(run_dependency["show_progress"], "minimal")
+        summary_id = run_dependency["outputs"][0]
+        self.assertEqual(run_dependency["show_progress_on"], [summary_id])
         self.assertEqual(upload_dependency["show_progress"], "hidden")
         self.assertEqual(len(column_dependencies), 2)
         self.assertTrue(

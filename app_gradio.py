@@ -435,6 +435,7 @@ def build_app() -> gr.Blocks:
                 translated_download,
             ],
             show_progress="minimal",
+            show_progress_on=summary,
         )
 
         fasta_file.upload(
