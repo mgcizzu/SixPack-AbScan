@@ -62,9 +62,38 @@ Then open the local URL printed in the terminal (typically `http://127.0.0.1:786
 
 In the app:
 1. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
-2. Upload your sequence file and epitope table.
+2. Upload a plain/gzipped sequence FASTA and an epitope table, or paste a direct
+   `https://*.ncbi.nlm.nih.gov/...` FASTA URL instead of uploading the sequence.
 3. Set epitope column/separator if needed.
-4. Run scan, inspect tables, and download output files.
+4. Run the scan, follow the preparation/translation/search progress, inspect the
+   tables, and download output files.
+
+Gradio displays its native browser-to-server transfer status during uploads. Once
+an upload reaches the server, or while an NCBI file is downloaded, the app reports
+progress for acquisition, gzip decompression, FASTA validation, translation, and
+epitope scanning. Gzipped inputs are expanded into temporary local FASTA files
+because the existing search pipeline expects a normal, seekable path; those
+temporary files are removed after the run.
+
+Remote inputs are restricted to HTTPS URLs on `ncbi.nlm.nih.gov` or its
+subdomains. Redirect destinations are revalidated, DNS answers must be public,
+and compressed/downloaded and decompressed sizes are bounded. The defaults can be
+adjusted with these environment variables (values are bytes unless noted):
+
+- `MAX_FASTA_SOURCE_BYTES` (default: 2 GiB)
+- `MAX_FASTA_DECOMPRESSED_BYTES` (default: 8 GiB)
+- `NCBI_DOWNLOAD_TIMEOUT_SECONDS` (default: 30)
+- `MAX_NCBI_REDIRECTS` (default: 5)
+
+The source-size limit is also passed to Gradio as its maximum upload size.
+
+## Tests
+
+Run the focused input-preparation and URL security tests with:
+
+```bash
+python -m unittest discover -v
+```
 
 ## SciLifeLab Serve Preparation (Steps 0-4)
 

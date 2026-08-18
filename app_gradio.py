@@ -4,18 +4,23 @@
 from __future__ import annotations
 
 import atexit
-from datetime import datetime
 import os
-from pathlib import Path
+import shutil
 import socket
 import traceback
-from typing import Generator
-import shutil
+from collections.abc import Generator
+from datetime import UTC, datetime
+from pathlib import Path
 
 import gradio as gr
 import pandas as pd
-from Bio import SeqIO
 
+from fasta_input import (
+    MAX_FASTA_SOURCE_BYTES,
+    InputPreparationError,
+    format_bytes,
+    prepare_fasta,
+)
 from sixpack_abscan import (
     normalize_epitope,
     read_epitope_table,
@@ -25,6 +30,9 @@ from sixpack_abscan import (
 
 RUNS_DIR = Path("runs")
 _SESSION_RUN_DIRS: set[Path] = set()
+NUCLEOTIDE_MODE = "Nucleotide FASTA (will be 6-frame translated automatically)"
+PROTEIN_MODE = "Protein FASTA (precomputed proteome)"
+FASTA_FILE_TYPES = [".fa", ".fasta", ".fna", ".faa", ".fas", ".gz"]
 APP_CSS = """
 .gradio-container {
     font-size: 18px;
@@ -100,151 +108,216 @@ def _run_scan(
     input_mode: str,
     nucleotide_fasta: str | None,
     protein_fasta: str | None,
+    ncbi_url: str | None,
     epitope_file: str | None,
     epitope_column: str | None,
     epitope_separator: str,
+    progress: gr.Progress = gr.Progress(),  # noqa: B008 - Gradio dependency injection
 ) -> Generator[tuple, None, None]:
     if not epitope_file:
         raise gr.Error("Please upload an epitope file (CSV/TSV/XLSX).")
     if not epitope_column:
         raise gr.Error("Please select an epitope column from the dropdown.")
 
-    nucleotide_path = Path(nucleotide_fasta) if nucleotide_fasta else None
-    protein_path = Path(protein_fasta) if protein_fasta else None
     epitope_path = Path(epitope_file)
 
-    if input_mode == "Nucleotide FASTA (will be 6-frame translated automatically)":
-        if not nucleotide_path:
-            raise gr.Error("Please upload a nucleotide FASTA file.")
-        protein_path = None
-    else:
-        if not protein_path:
-            raise gr.Error("Please upload a precomputed protein FASTA file.")
-        nucleotide_path = None
-
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path("runs") / f"run_{run_id}"
-    _SESSION_RUN_DIRS.add(output_dir)
-
-    epitope_df = read_epitope_table(epitope_path, epitope_separator)
-    if epitope_column not in epitope_df.columns:
-        raise gr.Error(f"Selected column '{epitope_column}' is not in the epitope file.")
-    epitope_count = (
-        epitope_df[epitope_column].dropna().astype(str).str.strip().ne("").sum()
-        if epitope_column in epitope_df.columns
-        else 0
+    selected_upload = (
+        nucleotide_fasta if input_mode == NUCLEOTIDE_MODE else protein_fasta
     )
-
-    empty_df = pd.DataFrame()
-    translated_output: Path | None = None
-    if input_mode == "Nucleotide FASTA (will be 6-frame translated automatically)":
-        seq_count = sum(1 for _ in SeqIO.parse(str(nucleotide_path), "fasta"))
-        yield (
-            "Computing 6-frame translation, please be patient.\n\n"
-            "This can take up to 5 minutes for large datasets.\n\n"
-            f"- Input nucleotide sequences: `{seq_count}`\n"
-            f"- Epitopes to scan: `{int(epitope_count)}`",
-            empty_df,
-            empty_df,
-            None,
-            None,
-            None,
+    if not selected_upload and not (ncbi_url or "").strip():
+        sequence_type = "nucleotide" if input_mode == NUCLEOTIDE_MODE else "protein"
+        raise gr.Error(
+            f"Please upload a {sequence_type} FASTA file or provide an NCBI URL."
         )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        translated_output = output_dir / "output6frame.fasta"
-        for translated_count, total_count in write_six_frame_fasta_with_progress(
-            nucleotide_path, translated_output
-        ):
-            if (
-                translated_count == 1
-                or translated_count == total_count
-                or translated_count % 25 == 0
-            ):
-                yield (
+
+    def report_progress(stage: str, completed: int | None, total: int | None) -> None:
+        if completed is not None and total:
+            progress((completed, total), desc=stage)
+        elif completed is not None:
+            progress(0, desc=f"{stage} ({format_bytes(completed)})")
+        else:
+            progress(0, desc=stage)
+
+    try:
+        prepared_fasta = prepare_fasta(
+            uploaded_path=selected_upload,
+            ncbi_url=ncbi_url,
+            progress=report_progress,
+        )
+    except InputPreparationError as exc:
+        raise gr.Error(str(exc)) from exc
+
+    nucleotide_path = prepared_fasta.path if input_mode == NUCLEOTIDE_MODE else None
+    protein_path = prepared_fasta.path if input_mode == PROTEIN_MODE else None
+
+    try:
+        run_id = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
+        output_dir = RUNS_DIR / f"run_{run_id}"
+        _SESSION_RUN_DIRS.add(output_dir)
+
+        epitope_df = read_epitope_table(epitope_path, epitope_separator)
+        if epitope_column not in epitope_df.columns:
+            raise gr.Error(
+                f"Selected column '{epitope_column}' is not in the epitope file."
+            )
+        epitope_count = (
+            epitope_df[epitope_column].dropna().astype(str).str.strip().ne("").sum()
+            if epitope_column in epitope_df.columns
+            else 0
+        )
+
+        empty_df = pd.DataFrame()
+        translated_output: Path | None = None
+        source_note = " (decompressed from gzip)" if prepared_fasta.was_gzip else ""
+        safe_source_name = prepared_fasta.source_name.replace("`", "'")
+        if input_mode == NUCLEOTIDE_MODE:
+            seq_count = prepared_fasta.record_count
+            yield (
+                (
                     "Computing 6-frame translation, please be patient.\n\n"
                     "This can take up to 5 minutes for large datasets.\n\n"
-                    f"- Translated sequences: `{translated_count}/{total_count}`\n"
-                    f"- Epitopes to scan: `{int(epitope_count)}`",
-                    empty_df,
-                    empty_df,
-                    None,
-                    None,
-                    None,
+                    f"- FASTA source: `{safe_source_name}`{source_note}\n"
+                    f"- Input nucleotide sequences: `{seq_count}`\n"
+                    f"- Epitopes to scan: `{int(epitope_count)}`"
+                ),
+                empty_df,
+                empty_df,
+                None,
+                None,
+                None,
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            translated_output = output_dir / "output6frame.fasta"
+            assert nucleotide_path is not None
+            for translated_count, total_count in write_six_frame_fasta_with_progress(
+                nucleotide_path, translated_output
+            ):
+                progress(
+                    (translated_count, total_count),
+                    desc="Computing six-frame translation",
                 )
-    else:
-        seq_count = sum(1 for _ in SeqIO.parse(str(protein_path), "fasta"))
-        yield (
-            "Scanning protein FASTA for epitope matches, please wait.\n\n"
-            f"- Input protein sequences: `{seq_count}`\n"
-            f"- Epitopes to scan: `{int(epitope_count)}`",
-            empty_df,
-            empty_df,
-            None,
-            None,
-            None,
+                if (
+                    translated_count == 1
+                    or translated_count == total_count
+                    or translated_count % 25 == 0
+                ):
+                    yield (
+                        (
+                            "Computing 6-frame translation, please be patient.\n\n"
+                            "This can take up to 5 minutes for large datasets.\n\n"
+                            f"- FASTA source: `{safe_source_name}`{source_note}\n"
+                            f"- Translated sequences: `{translated_count}/{total_count}`\n"
+                            f"- Epitopes to scan: `{int(epitope_count)}`"
+                        ),
+                        empty_df,
+                        empty_df,
+                        None,
+                        None,
+                        None,
+                    )
+        else:
+            seq_count = prepared_fasta.record_count
+            yield (
+                (
+                    "Scanning protein FASTA for epitope matches, please wait.\n\n"
+                    f"- FASTA source: `{safe_source_name}`{source_note}\n"
+                    f"- Input protein sequences: `{seq_count}`\n"
+                    f"- Epitopes to scan: `{int(epitope_count)}`"
+                ),
+                empty_df,
+                empty_df,
+                None,
+                None,
+                None,
+            )
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        protein_to_scan = translated_output or protein_path
+        assert protein_to_scan is not None
+
+        epitope_df = epitope_df.copy()
+        epitope_df["epitope_query"] = epitope_df[epitope_column].apply(
+            normalize_epitope
         )
+        epitope_df = epitope_df.dropna(subset=["epitope_query"])
+        unique_epitopes = sorted(set(epitope_df["epitope_query"].tolist()))
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    protein_to_scan = translated_output or protein_path
-    assert protein_to_scan is not None
-
-    epitope_df = epitope_df.copy()
-    epitope_df["epitope_query"] = epitope_df[epitope_column].apply(normalize_epitope)
-    epitope_df = epitope_df.dropna(subset=["epitope_query"])
-    unique_epitopes = sorted(set(epitope_df["epitope_query"].tolist()))
-
-    total_hits_so_far = 0
-    hits_df = pd.DataFrame(columns=["epitope_query", "target_id", "target_description"])
-    scan_gen = scan_epitopes_with_progress(unique_epitopes, protein_to_scan)
-    while True:
-        try:
-            scanned, total, total_hits_so_far = next(scan_gen)
-            if scanned == 1 or scanned == total or scanned % 10 == 0:
-                yield (
-                    "Scanning translated/protein sequences for epitope matches.\n\n"
-                    f"- Scanned epitopes: `{scanned}/{total}`\n"
-                    f"- Hits found so far: `{total_hits_so_far}`",
-                    empty_df,
-                    empty_df,
-                    None,
-                    None,
-                    None,
-                )
-        except StopIteration as stop:
-            hits_df = stop.value
-            break
-
-    hits_path = output_dir / "epitope_hits.csv"
-    if hits_df.empty:
+        total_hits_so_far = 0
         hits_df = pd.DataFrame(
             columns=["epitope_query", "target_id", "target_description"]
         )
-    hits_df.to_csv(hits_path, index=False)
+        scan_gen = scan_epitopes_with_progress(unique_epitopes, protein_to_scan)
+        while True:
+            try:
+                scanned, total, total_hits_so_far = next(scan_gen)
+                progress((scanned, total), desc="Scanning epitopes")
+                if scanned == 1 or scanned == total or scanned % 10 == 0:
+                    yield (
+                        (
+                            "Scanning translated/protein sequences for epitope matches.\n\n"
+                            f"- Scanned epitopes: `{scanned}/{total}`\n"
+                            f"- Hits found so far: `{total_hits_so_far}`"
+                        ),
+                        empty_df,
+                        empty_df,
+                        None,
+                        None,
+                        None,
+                    )
+            except StopIteration as stop:
+                hits_df = stop.value
+                break
 
-    merged = epitope_df.merge(hits_df, on="epitope_query", how="inner")
-    matched_path = output_dir / "matched_epitope_rows.csv"
-    merged.to_csv(matched_path, index=False)
-    translated_path = translated_output
+        hits_path = output_dir / "epitope_hits.csv"
+        if hits_df.empty:
+            hits_df = pd.DataFrame(
+                columns=["epitope_query", "target_id", "target_description"]
+            )
+        hits_df.to_csv(hits_path, index=False)
 
-    hits_df = pd.read_csv(hits_path)
-    matched_df = pd.read_csv(matched_path)
+        merged = epitope_df.merge(hits_df, on="epitope_query", how="inner")
+        matched_path = output_dir / "matched_epitope_rows.csv"
+        merged.to_csv(matched_path, index=False)
+        translated_path = translated_output
 
-    summary = (
-        f"Run complete.\n\n"
-        f"- Output directory: `{output_dir}`\n"
-        f"- Unique epitopes scanned: `{len(unique_epitopes)}`\n"
-        f"- Total hits: `{len(hits_df)}`\n"
-        f"- Matched metadata rows: `{len(matched_df)}`"
-    )
+        hits_df = pd.read_csv(hits_path)
+        matched_df = pd.read_csv(matched_path)
 
-    translated_download = str(translated_path) if translated_path else None
-    yield (
-        summary,
-        hits_df,
-        matched_df,
-        str(hits_path),
-        str(matched_path),
-        translated_download,
+        summary = (
+            f"Run complete.\n\n"
+            f"- Output directory: `{output_dir}`\n"
+            f"- Unique epitopes scanned: `{len(unique_epitopes)}`\n"
+            f"- Total hits: `{len(hits_df)}`\n"
+            f"- Matched metadata rows: `{len(matched_df)}`"
+        )
+
+        translated_download = str(translated_path) if translated_path else None
+        progress(1, desc="Run complete")
+        yield (
+            summary,
+            hits_df,
+            matched_df,
+            str(hits_path),
+            str(matched_path),
+            translated_download,
+        )
+    finally:
+        prepared_fasta.cleanup()
+
+
+def _upload_received(uploaded_path: str | None) -> str:
+    """Report when Gradio's native browser-to-server upload has completed."""
+
+    if not uploaded_path:
+        return ""
+    path = Path(uploaded_path)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "Upload could not be read by the server."
+    return (
+        f"Upload complete: `{path.name}` ({format_bytes(size)}). "
+        "It will be decompressed and validated when the scan starts."
     )
 
 
@@ -267,9 +340,7 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
         return gr.update(choices=[], value=None, interactive=False)
 
     default_column = (
-        "epitope_specificity"
-        if "epitope_specificity" in headers
-        else headers[0]
+        "epitope_specificity" if "epitope_specificity" in headers else headers[0]
     )
     return gr.update(choices=headers, value=default_column, interactive=True)
 
@@ -307,35 +378,57 @@ def build_app() -> gr.Blocks:
         with gr.Row():
             input_mode = gr.Radio(
                 choices=[
-                    "Nucleotide FASTA (will be 6-frame translated automatically)",
-                    "Protein FASTA (precomputed proteome)",
+                    NUCLEOTIDE_MODE,
+                    PROTEIN_MODE,
                 ],
-                value="Nucleotide FASTA (will be 6-frame translated automatically)",
+                value=NUCLEOTIDE_MODE,
                 label="On which file type you want to perform the search?",
             )
 
+        gr.Markdown(
+            "Provide **one** sequence source for the selected mode: upload a FASTA/"
+            "FASTA.GZ file, or paste a direct HTTPS file URL on an NCBI host. "
+            "Gradio shows transfer progress while an upload is in progress."
+        )
+
         with gr.Row():
-            nucleotide_fasta = gr.File(
-                label="Nucleotide FASTA",
-                file_count="single",
-                type="filepath",
-            )
-            protein_fasta = gr.File(
-                label="Protein FASTA",
-                file_count="single",
-                type="filepath",
-            )
+            with gr.Column():
+                nucleotide_fasta = gr.File(
+                    label="Nucleotide FASTA or FASTA.GZ",
+                    file_count="single",
+                    file_types=FASTA_FILE_TYPES,
+                    type="filepath",
+                )
+                nucleotide_upload_status = gr.Markdown()
+            with gr.Column():
+                protein_fasta = gr.File(
+                    label="Protein FASTA or FASTA.GZ",
+                    file_count="single",
+                    file_types=FASTA_FILE_TYPES,
+                    type="filepath",
+                )
+                protein_upload_status = gr.Markdown()
+
+        ncbi_url = gr.Textbox(
+            label="Or use a direct NCBI FASTA file URL",
+            placeholder="https://ftp.ncbi.nlm.nih.gov/.../genomic.fna.gz",
+            info="HTTPS only; the URL and every redirect must remain on ncbi.nlm.nih.gov.",
+        )
 
         run_button = gr.Button("Run Scan", variant="primary")
 
         summary = gr.Markdown()
         hits_table = gr.Dataframe(label="Epitope hits", interactive=False)
-        matched_table = gr.Dataframe(label="Matched epitope metadata rows", interactive=False)
+        matched_table = gr.Dataframe(
+            label="Matched epitope metadata rows", interactive=False
+        )
 
         with gr.Row():
             hits_download = gr.File(label="Download: epitope_hits.csv")
             matched_download = gr.File(label="Download: matched_epitope_rows.csv")
-            translated_download = gr.File(label="Download: output6frame.fasta (if generated)")
+            translated_download = gr.File(
+                label="Download: output6frame.fasta (if generated)"
+            )
 
         run_button.click(
             fn=_run_scan,
@@ -343,6 +436,7 @@ def build_app() -> gr.Blocks:
                 input_mode,
                 nucleotide_fasta,
                 protein_fasta,
+                ncbi_url,
                 epitope_file,
                 epitope_column,
                 epitope_separator,
@@ -355,7 +449,20 @@ def build_app() -> gr.Blocks:
                 matched_download,
                 translated_download,
             ],
-            show_progress="hidden",
+            show_progress="full",
+        )
+
+        nucleotide_fasta.upload(
+            fn=_upload_received,
+            inputs=[nucleotide_fasta],
+            outputs=[nucleotide_upload_status],
+            show_progress="minimal",
+        )
+        protein_fasta.upload(
+            fn=_upload_received,
+            inputs=[protein_fasta],
+            outputs=[protein_upload_status],
+            show_progress="minimal",
         )
 
         epitope_file.change(
@@ -406,6 +513,7 @@ def main() -> None:
             server_name=server_name,
             server_port=server_port,
             root_path=root_path,
+            max_file_size=MAX_FASTA_SOURCE_BYTES,
         )
     except Exception:
         print("Application startup failed:", flush=True)
