@@ -106,8 +106,7 @@ if os.getenv("CLEANUP_RUNS_ON_EXIT", "1") == "1":
 
 def _run_scan(
     input_mode: str,
-    nucleotide_fasta: str | None,
-    protein_fasta: str | None,
+    fasta_file: str | None,
     ncbi_url: str | None,
     epitope_file: str | None,
     epitope_column: str | None,
@@ -121,10 +120,7 @@ def _run_scan(
 
     epitope_path = Path(epitope_file)
 
-    selected_upload = (
-        nucleotide_fasta if input_mode == NUCLEOTIDE_MODE else protein_fasta
-    )
-    if not selected_upload and not (ncbi_url or "").strip():
+    if not fasta_file and not (ncbi_url or "").strip():
         sequence_type = "nucleotide" if input_mode == NUCLEOTIDE_MODE else "protein"
         raise gr.Error(
             f"Please upload a {sequence_type} FASTA file or provide an NCBI URL."
@@ -140,7 +136,7 @@ def _run_scan(
 
     try:
         prepared_fasta = prepare_fasta(
-            uploaded_path=selected_upload,
+            uploaded_path=fasta_file,
             ncbi_url=ncbi_url,
             progress=report_progress,
         )
@@ -391,23 +387,13 @@ def build_app() -> gr.Blocks:
             "Gradio shows transfer progress while an upload is in progress."
         )
 
-        with gr.Row():
-            with gr.Column():
-                nucleotide_fasta = gr.File(
-                    label="Nucleotide FASTA or FASTA.GZ",
-                    file_count="single",
-                    file_types=FASTA_FILE_TYPES,
-                    type="filepath",
-                )
-                nucleotide_upload_status = gr.Markdown()
-            with gr.Column():
-                protein_fasta = gr.File(
-                    label="Protein FASTA or FASTA.GZ",
-                    file_count="single",
-                    file_types=FASTA_FILE_TYPES,
-                    type="filepath",
-                )
-                protein_upload_status = gr.Markdown()
+        fasta_file = gr.File(
+            label="Upload sequence FASTA or FASTA.GZ",
+            file_count="single",
+            file_types=FASTA_FILE_TYPES,
+            type="filepath",
+        )
+        fasta_upload_status = gr.Markdown()
 
         ncbi_url = gr.Textbox(
             label="Or use a direct NCBI FASTA file URL",
@@ -434,8 +420,7 @@ def build_app() -> gr.Blocks:
             fn=_run_scan,
             inputs=[
                 input_mode,
-                nucleotide_fasta,
-                protein_fasta,
+                fasta_file,
                 ncbi_url,
                 epitope_file,
                 epitope_column,
@@ -449,31 +434,27 @@ def build_app() -> gr.Blocks:
                 matched_download,
                 translated_download,
             ],
-            show_progress="full",
+            show_progress="minimal",
         )
 
-        nucleotide_fasta.upload(
+        fasta_file.upload(
             fn=_upload_received,
-            inputs=[nucleotide_fasta],
-            outputs=[nucleotide_upload_status],
-            show_progress="minimal",
-        )
-        protein_fasta.upload(
-            fn=_upload_received,
-            inputs=[protein_fasta],
-            outputs=[protein_upload_status],
-            show_progress="minimal",
+            inputs=[fasta_file],
+            outputs=[fasta_upload_status],
+            show_progress="hidden",
         )
 
         epitope_file.change(
             fn=_load_epitope_columns,
             inputs=[epitope_file, epitope_separator],
             outputs=[epitope_column],
+            show_progress="hidden",
         )
         epitope_separator.change(
             fn=_load_epitope_columns,
             inputs=[epitope_file, epitope_separator],
             outputs=[epitope_column],
+            show_progress="hidden",
         )
 
         gr.Markdown(

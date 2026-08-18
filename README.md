@@ -89,7 +89,8 @@ The source-size limit is also passed to Gradio as its maximum upload size.
 
 ## Tests
 
-Run the focused input-preparation and URL security tests with:
+Run the focused Gradio configuration, input-preparation, and URL security tests
+with:
 
 ```bash
 python -m unittest discover -v
