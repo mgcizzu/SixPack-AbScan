@@ -9,109 +9,80 @@ Predict antibody cross-reactivity by scanning epitope peptides against:
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 from pathlib import Path
 from typing import Generator, Iterable
 
 import pandas as pd
 from Bio import SeqIO
+from Bio.Data import CodonTable
 
 
 MAX_SCAN_PROGRESS_UPDATES = 100
-
-
-GENETIC_CODE = {
-    "ATA": "I",
-    "ATC": "I",
-    "ATT": "I",
-    "ATG": "M",
-    "ACA": "T",
-    "ACC": "T",
-    "ACG": "T",
-    "ACT": "T",
-    "AAC": "N",
-    "AAT": "N",
-    "AAA": "K",
-    "AAG": "K",
-    "AGC": "S",
-    "AGT": "S",
-    "AGA": "R",
-    "AGG": "R",
-    "CTA": "L",
-    "CTC": "L",
-    "CTG": "L",
-    "CTT": "L",
-    "CCA": "P",
-    "CCC": "P",
-    "CCG": "P",
-    "CCT": "P",
-    "CAC": "H",
-    "CAT": "H",
-    "CAA": "Q",
-    "CAG": "Q",
-    "CGA": "R",
-    "CGC": "R",
-    "CGG": "R",
-    "CGT": "R",
-    "GTA": "V",
-    "GTC": "V",
-    "GTG": "V",
-    "GTT": "V",
-    "GCA": "A",
-    "GCC": "A",
-    "GCG": "A",
-    "GCT": "A",
-    "GAC": "D",
-    "GAT": "D",
-    "GAA": "E",
-    "GAG": "E",
-    "GGA": "G",
-    "GGC": "G",
-    "GGG": "G",
-    "GGT": "G",
-    "TCA": "S",
-    "TCC": "S",
-    "TCG": "S",
-    "TCT": "S",
-    "TTC": "F",
-    "TTT": "F",
-    "TTA": "L",
-    "TTG": "L",
-    "TAC": "Y",
-    "TAT": "Y",
-    "TAA": "_",
-    "TAG": "_",
-    "TGC": "C",
-    "TGT": "C",
-    "TGA": "_",
-    "TGG": "W",
+DEFAULT_GENETIC_CODE_TABLE = 1
+GENETIC_CODE_TABLE_NAMES = {
+    table_id: table.names[0]
+    for table_id, table in sorted(CodonTable.unambiguous_dna_by_id.items())
 }
 
 BASE_COMPLEMENT = str.maketrans({"A": "T", "C": "G", "G": "C", "T": "A", "N": "N"})
+
+
+def genetic_code_table_name(table_id: int) -> str:
+    try:
+        return GENETIC_CODE_TABLE_NAMES[int(table_id)]
+    except (KeyError, TypeError, ValueError) as exc:
+        available = ", ".join(str(value) for value in GENETIC_CODE_TABLE_NAMES)
+        raise ValueError(
+            f"Unknown NCBI genetic code table {table_id!r}. Available tables: {available}."
+        ) from exc
+
+
+@lru_cache(maxsize=None)
+def _genetic_code_mapping(table_id: int) -> dict[str, str]:
+    """Return codon translations for one NCBI table without CDS start handling."""
+
+    genetic_code_table_name(table_id)
+    table = CodonTable.unambiguous_dna_by_id[int(table_id)]
+    mapping = {codon: "_" for codon in table.stop_codons}
+    # Some NCBI tables contain context-dependent stop codons that also have an
+    # amino-acid meaning. For arbitrary six-frame translation, Biopython uses
+    # the amino-acid meaning when CDS-aware translation is disabled.
+    mapping.update(table.forward_table)
+    return mapping
 
 
 def reverse_complement(sequence: str) -> str:
     return sequence.upper().translate(BASE_COMPLEMENT)[::-1]
 
 
-def translate_frame(sequence: str, offset: int) -> str:
+def translate_frame(
+    sequence: str,
+    offset: int,
+    genetic_code_table: int = DEFAULT_GENETIC_CODE_TABLE,
+) -> str:
     translated = []
     seq = sequence[offset:]
+    genetic_code = _genetic_code_mapping(genetic_code_table)
     for i in range(0, len(seq) - 2, 3):
         codon = seq[i : i + 3]
-        translated.append(GENETIC_CODE.get(codon, "X"))
+        translated.append(genetic_code.get(codon, "X"))
     return "".join(translated)
 
 
-def six_frame_translation(sequence: str) -> list[str]:
+def six_frame_translation(
+    sequence: str,
+    genetic_code_table: int = DEFAULT_GENETIC_CODE_TABLE,
+) -> list[str]:
     seq = sequence.upper()
     rc = reverse_complement(seq)
     return [
-        translate_frame(seq, 0),
-        translate_frame(seq, 1),
-        translate_frame(seq, 2),
-        translate_frame(rc, 0),
-        translate_frame(rc, 1),
-        translate_frame(rc, 2),
+        translate_frame(seq, 0, genetic_code_table),
+        translate_frame(seq, 1, genetic_code_table),
+        translate_frame(seq, 2, genetic_code_table),
+        translate_frame(rc, 0, genetic_code_table),
+        translate_frame(rc, 1, genetic_code_table),
+        translate_frame(rc, 2, genetic_code_table),
     ]
 
 
@@ -120,19 +91,30 @@ def wrap_fasta(seq: str, width: int = 80) -> Iterable[str]:
         yield seq[i : i + width]
 
 
-def write_six_frame_fasta(input_fasta: Path, output_fasta: Path) -> None:
-    for _ in write_six_frame_fasta_with_progress(input_fasta, output_fasta):
+def write_six_frame_fasta(
+    input_fasta: Path,
+    output_fasta: Path,
+    genetic_code_table: int = DEFAULT_GENETIC_CODE_TABLE,
+) -> None:
+    for _ in write_six_frame_fasta_with_progress(
+        input_fasta,
+        output_fasta,
+        genetic_code_table,
+    ):
         pass
 
 
 def write_six_frame_fasta_with_progress(
-    input_fasta: Path, output_fasta: Path
+    input_fasta: Path,
+    output_fasta: Path,
+    genetic_code_table: int = DEFAULT_GENETIC_CODE_TABLE,
 ) -> Iterable[tuple[int, int]]:
+    genetic_code_table_name(genetic_code_table)
     total_records = sum(1 for _ in SeqIO.parse(str(input_fasta), "fasta"))
     written = 0
     with output_fasta.open("w", encoding="utf-8") as out_handle:
         for record in SeqIO.parse(str(input_fasta), "fasta"):
-            frames = six_frame_translation(str(record.seq))
+            frames = six_frame_translation(str(record.seq), genetic_code_table)
             for idx, frame_seq in enumerate(frames, start=1):
                 out_handle.write(f">{record.id}|frame{idx}\n")
                 for line in wrap_fasta(frame_seq):
@@ -236,6 +218,7 @@ def run_abscan(
     epitope_file: Path,
     epitope_column: str = "epitope_specificity",
     epitope_separator: str = ";",
+    genetic_code_table: int = DEFAULT_GENETIC_CODE_TABLE,
     input_nucleotide_fasta: Path | None = None,
     input_protein_fasta: Path | None = None,
     translated_fasta_name: str = "output6frame.fasta",
@@ -256,8 +239,17 @@ def run_abscan(
         print(f"Using precomputed protein FASTA: {protein_fasta}")
     else:
         assert input_nucleotide_fasta is not None
-        print(f"Generating six-frame translation from: {input_nucleotide_fasta}")
-        write_six_frame_fasta(input_nucleotide_fasta, translated_output)
+        genetic_code_name = genetic_code_table_name(genetic_code_table)
+        print(
+            "Generating six-frame translation from: "
+            f"{input_nucleotide_fasta} (NCBI table {genetic_code_table}: "
+            f"{genetic_code_name})"
+        )
+        write_six_frame_fasta(
+            input_nucleotide_fasta,
+            translated_output,
+            genetic_code_table,
+        )
         protein_fasta = translated_output
         print(f"Six-frame FASTA written to: {translated_output}")
 
@@ -328,6 +320,16 @@ def parse_args() -> argparse.Namespace:
         help="Delimiter used when reading CSV/TSV epitope files.",
     )
     parser.add_argument(
+        "--genetic-code",
+        type=int,
+        choices=sorted(GENETIC_CODE_TABLE_NAMES),
+        default=DEFAULT_GENETIC_CODE_TABLE,
+        help=(
+            "NCBI genetic code table used for nucleotide six-frame translation "
+            f"(default: {DEFAULT_GENETIC_CODE_TABLE}, Standard)."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         required=True,
@@ -363,6 +365,7 @@ def main() -> None:
         epitope_file=args.epitope_file,
         epitope_column=args.epitope_column,
         epitope_separator=args.epitope_separator,
+        genetic_code_table=args.genetic_code,
         input_nucleotide_fasta=args.input_nucleotide_fasta,
         input_protein_fasta=args.input_protein_fasta,
         translated_fasta_name=args.translated_fasta_name,

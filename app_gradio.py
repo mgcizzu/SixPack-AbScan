@@ -22,6 +22,9 @@ from fasta_input import (
     prepare_fasta,
 )
 from sixpack_abscan import (
+    DEFAULT_GENETIC_CODE_TABLE,
+    GENETIC_CODE_TABLE_NAMES,
+    genetic_code_table_name,
     normalize_epitope,
     read_epitope_table,
     scan_epitopes_with_progress,
@@ -33,6 +36,10 @@ _SESSION_RUN_DIRS: set[Path] = set()
 NUCLEOTIDE_MODE = "Nucleotide FASTA (will be 6-frame translated automatically)"
 PROTEIN_MODE = "Protein FASTA (precomputed proteome)"
 FASTA_FILE_TYPES = [".fa", ".fasta", ".fna", ".faa", ".fas", ".gz"]
+GENETIC_CODE_CHOICES = [
+    (f"{table_id} — {name}", table_id)
+    for table_id, name in GENETIC_CODE_TABLE_NAMES.items()
+]
 APP_CSS = """
 .gradio-container {
     font-size: 18px;
@@ -106,6 +113,7 @@ if os.getenv("CLEANUP_RUNS_ON_EXIT", "1") == "1":
 
 def _run_scan(
     input_mode: str,
+    genetic_code_table: int,
     fasta_file: str | None,
     ncbi_url: str | None,
     epitope_file: str | None,
@@ -125,6 +133,14 @@ def _run_scan(
         raise gr.Error(
             f"Please upload a {sequence_type} FASTA file or provide an NCBI URL."
         )
+
+    genetic_code_name: str | None = None
+    if input_mode == NUCLEOTIDE_MODE:
+        try:
+            genetic_code_table = int(genetic_code_table)
+            genetic_code_name = genetic_code_table_name(genetic_code_table)
+        except (TypeError, ValueError) as exc:
+            raise gr.Error(str(exc)) from exc
 
     def report_progress(stage: str, completed: int | None, total: int | None) -> None:
         if completed is not None and total:
@@ -166,7 +182,12 @@ def _run_scan(
         translated_output: Path | None = None
         source_note = " (decompressed from gzip)" if prepared_fasta.was_gzip else ""
         safe_source_name = prepared_fasta.source_name.replace("`", "'")
+        genetic_code_summary = ""
         if input_mode == NUCLEOTIDE_MODE:
+            assert genetic_code_name is not None
+            genetic_code_summary = (
+                f"- Genetic code: `{genetic_code_table} — {genetic_code_name}`\n"
+            )
             seq_count = prepared_fasta.record_count
             yield (
                 (
@@ -174,6 +195,7 @@ def _run_scan(
                     "This can take up to 5 minutes for large datasets.\n\n"
                     f"- FASTA source: `{safe_source_name}`{source_note}\n"
                     f"- Input nucleotide sequences: `{seq_count}`\n"
+                    f"{genetic_code_summary}"
                     f"- Epitopes to scan: `{int(epitope_count)}`"
                 ),
                 empty_df,
@@ -186,7 +208,9 @@ def _run_scan(
             translated_output = output_dir / "output6frame.fasta"
             assert nucleotide_path is not None
             for translated_count, total_count in write_six_frame_fasta_with_progress(
-                nucleotide_path, translated_output
+                nucleotide_path,
+                translated_output,
+                genetic_code_table,
             ):
                 progress(
                     (translated_count, total_count),
@@ -212,6 +236,7 @@ def _run_scan(
                 "Scanning translated/protein sequences for epitope matches.\n\n"
                 f"- FASTA source: `{safe_source_name}`{source_note}\n"
                 f"- Protein sequences to scan: `{scan_record_count}`\n"
+                f"{genetic_code_summary}"
                 f"- Epitopes to scan: `{len(unique_epitopes)}`"
             ),
             empty_df,
@@ -259,6 +284,7 @@ def _run_scan(
             f"Run complete.\n\n"
             f"- Output directory: `{output_dir}`\n"
             f"- Unique epitopes scanned: `{len(unique_epitopes)}`\n"
+            f"{genetic_code_summary}"
             f"- Total hits: `{len(hits_df)}`\n"
             f"- Matched metadata rows: `{len(matched_df)}`"
         )
@@ -317,6 +343,10 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
     return gr.update(choices=headers, value=default_column, interactive=True)
 
 
+def _update_genetic_code_visibility(input_mode: str):
+    return gr.update(visible=input_mode == NUCLEOTIDE_MODE)
+
+
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="SixPack-AbScan", css=APP_CSS, head=APP_HEAD) as app:
         gr.Markdown(
@@ -364,6 +394,13 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
                 label="On which file type you want to perform the search?",
             )
 
+            genetic_code_table = gr.Dropdown(
+                choices=GENETIC_CODE_CHOICES,
+                value=DEFAULT_GENETIC_CODE_TABLE,
+                label="Genetic code (NCBI translation table)",
+                info="Used only when translating nucleotide FASTA input.",
+            )
+
         gr.Markdown(
             "Provide **one** sequence source for the selected mode: upload a FASTA/"
             "FASTA.GZ file, or paste a direct HTTPS file URL on an NCBI host. "
@@ -403,6 +440,7 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
             fn=_run_scan,
             inputs=[
                 input_mode,
+                genetic_code_table,
                 fasta_file,
                 ncbi_url,
                 epitope_file,
@@ -438,6 +476,12 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
             fn=_load_epitope_columns,
             inputs=[epitope_file, epitope_separator],
             outputs=[epitope_column],
+            show_progress="hidden",
+        )
+        input_mode.change(
+            fn=_update_genetic_code_visibility,
+            inputs=[input_mode],
+            outputs=[genetic_code_table],
             show_progress="hidden",
         )
 

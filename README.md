@@ -34,6 +34,7 @@ pip install -r requirements.txt
 ```bash
 python sixpack_abscan.py \
   --input-nucleotide-fasta /path/to/transcriptome_or_genome.fasta \
+  --genetic-code 1 \
   --epitope-file /path/to/epitopes.csv \
   --epitope-column epitope_specificity \
   --epitope-separator ';' \
@@ -62,10 +63,12 @@ Then open the local URL printed in the terminal (typically `http://127.0.0.1:786
 
 In the app:
 1. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
-2. Upload a plain/gzipped sequence FASTA and an epitope table, or paste a direct
+2. For nucleotide input, choose the appropriate NCBI genetic code table. The
+   default is table 1 (Standard).
+3. Upload a plain/gzipped sequence FASTA and an epitope table, or paste a direct
    `https://*.ncbi.nlm.nih.gov/...` FASTA URL instead of uploading the sequence.
-3. Set epitope column/separator if needed.
-4. Run the scan, follow the preparation/translation/search progress, inspect the
+4. Set epitope column/separator if needed.
+5. Run the scan, follow the preparation/translation/search progress, inspect the
    tables, and download output files.
 
 Gradio displays its native browser-to-server transfer status during uploads. Once
@@ -148,6 +151,9 @@ Written to `--output-dir`:
 - CSV/TSV epitope tables are read with `--epitope-separator` (default `;`).
 - Excel input (`.xlsx`/`.xls`) is supported automatically.
 - The default epitope column is `epitope_specificity`.
+- Nucleotide six-frame translation uses NCBI genetic code table 1 by default.
+  Select another table in the Gradio app or pass `--genetic-code TABLE_ID` to
+  the CLI when required by the source organism or organelle.
 
 ## Legacy Notebook
 

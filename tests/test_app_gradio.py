@@ -34,7 +34,26 @@ class GradioAppConfigurationTests(unittest.TestCase):
             for dependency in self.config["dependencies"]
             if dependency.get("api_name") == "_run_scan"
         )
-        self.assertEqual(len(run_dependency["inputs"]), 6)
+        self.assertEqual(len(run_dependency["inputs"]), 7)
+
+    def test_has_nucleotide_genetic_code_dropdown(self) -> None:
+        genetic_code_dropdowns = [
+            component
+            for component in self.config["components"]
+            if component.get("type") == "dropdown"
+            and component.get("props", {}).get("label")
+            == "Genetic code (NCBI translation table)"
+        ]
+
+        self.assertEqual(len(genetic_code_dropdowns), 1)
+        self.assertEqual(genetic_code_dropdowns[0]["props"]["value"], 1)
+
+        visibility_dependency = next(
+            dependency
+            for dependency in self.config["dependencies"]
+            if dependency.get("api_name") == "_update_genetic_code_visibility"
+        )
+        self.assertEqual(visibility_dependency["show_progress"], "hidden")
 
     def test_uses_only_explicit_processing_progress(self) -> None:
         dependencies = self.config["dependencies"]
@@ -91,6 +110,7 @@ class ScanProgressTests(unittest.TestCase):
                 updates = list(
                     _run_scan(
                         NUCLEOTIDE_MODE,
+                        1,
                         str(fasta_path),
                         None,
                         str(epitope_path),
@@ -110,6 +130,37 @@ class ScanProgressTests(unittest.TestCase):
             self.assertFalse(
                 any("Translated sequences" in summary for summary in summaries)
             )
+
+    def test_selected_genetic_code_is_used_for_translation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            directory_path = Path(directory)
+            fasta_path = directory_path / "input.fna"
+            fasta_path.write_text(">sequence\nATATGAAGA\n", encoding="utf-8")
+            epitope_path = directory_path / "epitopes.csv"
+            epitope_path.write_text(
+                "epitope_specificity\nMW\n", encoding="utf-8"
+            )
+
+            with (
+                patch.object(app_gradio, "RUNS_DIR", directory_path / "runs"),
+                patch.object(app_gradio, "_SESSION_RUN_DIRS", set()),
+            ):
+                updates = list(
+                    _run_scan(
+                        NUCLEOTIDE_MODE,
+                        2,
+                        str(fasta_path),
+                        None,
+                        str(epitope_path),
+                        "epitope_specificity",
+                        ";",
+                        progress=lambda *_args, **_kwargs: None,
+                    )
+                )
+
+        final_summary, final_hits = updates[-1][0], updates[-1][1]
+        self.assertIn("2 — Vertebrate Mitochondrial", final_summary)
+        self.assertEqual(final_hits["epitope_query"].tolist(), ["MW"])
 
 
 if __name__ == "__main__":

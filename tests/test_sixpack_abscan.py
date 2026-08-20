@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from sixpack_abscan import scan_epitopes, scan_epitopes_with_progress
+from sixpack_abscan import (
+    scan_epitopes,
+    scan_epitopes_with_progress,
+    six_frame_translation,
+    translate_frame,
+    write_six_frame_fasta,
+)
 
 
 def consume_progress_scan(
@@ -66,6 +72,40 @@ class EpitopeScanTests(unittest.TestCase):
 
         self.assertEqual(len(hits), 1)
         self.assertEqual(updates[-1], (2, 2, 1))
+
+
+class SixFrameTranslationTests(unittest.TestCase):
+    def test_standard_code_remains_the_default(self) -> None:
+        sequence = "ATATGAAGA"
+
+        self.assertEqual(translate_frame(sequence, 0), "I_R")
+        self.assertEqual(translate_frame(sequence, 0, 1), "I_R")
+
+    def test_vertebrate_mitochondrial_code_changes_expected_codons(self) -> None:
+        sequence = "ATATGAAGA"
+
+        self.assertEqual(translate_frame(sequence, 0, 2), "MW_")
+        self.assertEqual(six_frame_translation(sequence, 2)[0], "MW_")
+
+    def test_alternative_start_codons_are_not_forced_to_methionine(self) -> None:
+        self.assertEqual(translate_frame("GTG", 0, 11), "V")
+
+    def test_writer_uses_the_selected_genetic_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            directory_path = Path(directory)
+            input_path = directory_path / "input.fna"
+            output_path = directory_path / "translated.faa"
+            input_path.write_text(">sequence\nATATGAAGA\n", encoding="utf-8")
+
+            write_six_frame_fasta(input_path, output_path, 2)
+
+            output_lines = output_path.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(output_lines[:2], [">sequence|frame1", "MW_"])
+
+    def test_unknown_genetic_code_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown NCBI genetic code table"):
+            translate_frame("ATG", 0, 999)
 
 
 if __name__ == "__main__":
