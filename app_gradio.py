@@ -320,8 +320,15 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="SixPack-AbScan", css=APP_CSS, head=APP_HEAD) as app:
         gr.Markdown(
-            "# SixPack-AbScan\n"
-            "Interactive epitope matching for antibody cross-reactivity prediction."
+            """
+# SixPack-AbScan
+
+Interactive epitope matching for antibody cross-reactivity prediction.
+
+<span style="font-size: 0.9em; color: gray;">
+For the screening of large target sequence files (>2-3 Gb) we recommend the use of the command line version of SixPack-AbScan, or a local deployment of the app.
+</span>
+"""
         )
 
         gr.Markdown("### Antibody information")
@@ -360,7 +367,7 @@ def build_app() -> gr.Blocks:
         gr.Markdown(
             "Provide **one** sequence source for the selected mode: upload a FASTA/"
             "FASTA.GZ file, or paste a direct HTTPS file URL on an NCBI host. "
-            "Gradio shows transfer progress while an upload is in progress."
+            "A progress bar will show while an upload is in progress."
         )
 
         fasta_file = gr.File(
