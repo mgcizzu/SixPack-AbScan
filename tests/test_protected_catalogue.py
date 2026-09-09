@@ -52,6 +52,12 @@ class _ProgressRecorder:
 
 
 class AnalysisModeTests(unittest.TestCase):
+    def test_default_catalogue_path_uses_a_serve_allowed_mount_root(self) -> None:
+        self.assertEqual(
+            protected_catalogue.DEFAULT_CATALOGUE_DIRECTORY,
+            Path("/srv/project_vol/catalogues"),
+        )
+
     def test_each_mode_has_an_explicit_disclosure_policy(self) -> None:
         self.assertIs(output_policy_for(AnalysisMode.USER_SUPPLIED), OutputPolicy.FULL)
         self.assertIs(

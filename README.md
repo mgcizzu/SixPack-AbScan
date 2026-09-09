@@ -81,11 +81,14 @@ In the app:
 Protected catalogue data must not be committed to this repository or baked into
 a public container image.
 
-On SciLifeLab Serve, attach the project storage volume at `/project_vol`, create
-the subdirectory `/project_vol/catalogues`, and upload the private `.csv`/`.tsv`
-catalogues there. The app detects that directory automatically. Restart the app
-after adding or replacing files so its dropdown and in-memory catalogue cache
-are refreshed; no environment variable or container rebuild is required.
+On SciLifeLab Serve, configure `/srv/project_vol` as a mount path in the
+project's **Settings → Storage** page, then select that storage entry in the app
+settings. In Serve's file manager, create `project-vol/catalogues` and upload the
+private `.csv`/`.tsv` catalogues there. The files are then available inside the
+container at `/srv/project_vol/catalogues`, which the app detects automatically.
+Restart the app after adding or replacing files so its dropdown and in-memory
+catalogue cache are refreshed; no environment variable or container rebuild is
+required.
 
 For other hosting environments, mount a CSV/TSV from private server storage as
 a read-only runtime secret and point the backend to it:
