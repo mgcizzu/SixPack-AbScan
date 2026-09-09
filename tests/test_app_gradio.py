@@ -10,6 +10,7 @@ os.environ["CLEANUP_RUNS_ON_START"] = "0"
 os.environ["CLEANUP_RUNS_ON_EXIT"] = "0"
 
 import app_gradio  # noqa: E402
+from analysis_modes import AnalysisMode  # noqa: E402
 from app_gradio import NUCLEOTIDE_MODE, _run_scan, build_app  # noqa: E402
 
 
@@ -34,7 +35,28 @@ class GradioAppConfigurationTests(unittest.TestCase):
             for dependency in self.config["dependencies"]
             if dependency.get("api_name") == "_run_scan"
         )
-        self.assertEqual(len(run_dependency["inputs"]), 7)
+        self.assertEqual(len(run_dependency["inputs"]), 9)
+
+    def test_has_two_analysis_modes(self) -> None:
+        analysis_modes = [
+            component
+            for component in self.config["components"]
+            if component.get("type") == "radio"
+            and component.get("props", {}).get("label")
+            == "Choose how antibody epitopes are supplied"
+        ]
+
+        self.assertEqual(len(analysis_modes), 1)
+        self.assertEqual(
+            analysis_modes[0]["props"]["value"], AnalysisMode.USER_SUPPLIED.value
+        )
+
+        visibility_dependency = next(
+            dependency
+            for dependency in self.config["dependencies"]
+            if dependency.get("api_name") == "_set_analysis_mode"
+        )
+        self.assertEqual(visibility_dependency["show_progress"], "hidden")
 
     def test_has_nucleotide_genetic_code_dropdown(self) -> None:
         genetic_code_dropdowns = [
@@ -109,6 +131,8 @@ class ScanProgressTests(unittest.TestCase):
             ):
                 updates = list(
                     _run_scan(
+                        AnalysisMode.USER_SUPPLIED.value,
+                        None,
                         NUCLEOTIDE_MODE,
                         1,
                         str(fasta_path),
@@ -147,6 +171,8 @@ class ScanProgressTests(unittest.TestCase):
             ):
                 updates = list(
                     _run_scan(
+                        AnalysisMode.USER_SUPPLIED.value,
+                        None,
                         NUCLEOTIDE_MODE,
                         2,
                         str(fasta_path),

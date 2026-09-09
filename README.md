@@ -62,14 +62,84 @@ python app_gradio.py
 Then open the local URL printed in the terminal (typically `http://127.0.0.1:7860`).
 
 In the app:
-1. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
-2. For nucleotide input, choose the appropriate NCBI genetic code table. The
+1. Choose an analysis mode:
+   - `Upload my epitope list` keeps the existing detailed workflow and outputs.
+   - `Scan the protected antibody catalogue` scans every server-side catalogue
+     antibody and returns restricted metadata for positive hits only.
+2. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
+3. For nucleotide input, choose the appropriate NCBI genetic code table. The
    default is table 1 (Standard).
-3. Upload a plain/gzipped sequence FASTA and an epitope table, or paste a direct
-   `https://*.ncbi.nlm.nih.gov/...` FASTA URL instead of uploading the sequence.
-4. Set epitope column/separator if needed.
-5. Run the scan, follow the preparation/translation/search progress, inspect the
+4. Upload a plain/gzipped sequence FASTA and, for uploaded-list mode, an epitope
+   table; or paste a direct `https://*.ncbi.nlm.nih.gov/...` FASTA URL instead
+   of uploading the sequence.
+5. Set epitope column/separator if needed.
+6. Run the scan, follow the preparation/translation/search progress, inspect the
    tables, and download output files.
+
+### Protected catalogue configuration
+
+Protected catalogue data must not be committed to this repository or baked into
+a public container image.
+
+On SciLifeLab Serve, attach the project storage volume at `/project_vol`, create
+the subdirectory `/project_vol/catalogues`, and upload the private `.csv`/`.tsv`
+catalogues there. The app detects that directory automatically. Restart the app
+after adding or replacing files so its dropdown and in-memory catalogue cache
+are refreshed; no environment variable or container rebuild is required.
+
+For other hosting environments, mount a CSV/TSV from private server storage as
+a read-only runtime secret and point the backend to it:
+
+```bash
+export PROTECTED_CATALOGUE_PATH=/run/secrets/sixpack/protected_catalogue.csv
+python app_gradio.py
+```
+
+To offer multiple catalogues in the protected-mode dropdown, mount a private
+directory and configure it instead:
+
+```bash
+export PROTECTED_CATALOGUE_DIR=/run/secrets/sixpack/catalogues
+python app_gradio.py
+```
+
+Each `.csv`/`.tsv` filename becomes a public dropdown label with underscores and
+hyphens converted to spaces (for example, `Atlas_Antibodies.csv` is displayed as
+`Atlas Antibodies`). The browser receives an opaque selection key, never the
+private path. For a single file, `PROTECTED_CATALOGUE_LABEL` can set an explicit
+public label while retaining the legacy `PROTECTED_CATALOGUE_PATH` configuration.
+
+The private file has one row per antibody and these required columns:
+
+```text
+antibody_id,manufacturer,catalog_number,antibody_name,epitope_sequence
+```
+
+Every private catalogue file uses this same schema. Additional columns are
+permitted but ignored by protected-mode scanning.
+
+`antibody_id` is a stable internal identifier. It and `epitope_sequence`
+remain backend-only. The protected match result contains only:
+
+```text
+manufacturer,catalog_number,antibody_name,target_id,target_description
+```
+
+Every returned row is a positive exact match between one antibody and one target
+FASTA record. Results are grouped by `catalog_number`, antibodies without a match
+are omitted, and distinct matching records/isoforms remain separate rows. Protected
+runs scan the prepared FASTA once but do not write epitope sequences, matched
+peptide or coordinate data, alignments, or private catalogue rows.
+As in the existing workflow, a six-frame translation can be downloaded; it is
+derived only from the user's target input and is never annotated or joined with
+protected catalogue matches. The catalogue path is also explicitly blocked from
+Gradio's file-serving route.
+
+This prevents direct disclosure through the interface and generated match
+artifacts; it is not cryptographic protection against inference from repeated
+chosen-input queries. A public production service should add authentication,
+rate limits, and query controls appropriate to the catalogue owner's threat
+model.
 
 Gradio displays its native browser-to-server transfer status during uploads. Once
 an upload reaches the server, or while an NCBI file is downloaded, the app reports
@@ -145,6 +215,9 @@ Written to `--output-dir`:
 - `output6frame.fasta` (only when `--input-nucleotide-fasta` is used)
 - `epitope_hits.csv`: one row per matched `(epitope_query, target_id)`
 - `matched_epitope_rows.csv`: original epitope metadata rows joined with matching targets
+
+Protected catalogue mode instead writes only `catalogue_matches.csv`, containing
+the restricted fields documented above for positive hits only.
 
 ## Notes
 

@@ -9,3 +9,6 @@ __pycache__/
 .DS_Store
 .venv/
 runs/
+private_catalogues/
+protected_catalogue.csv
+*.protected-catalogue.csv

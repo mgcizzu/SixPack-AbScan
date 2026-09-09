@@ -15,11 +15,25 @@ from pathlib import Path
 import gradio as gr
 import pandas as pd
 
+from analysis_modes import (
+    ANALYSIS_MODE_CHOICES,
+    AnalysisMode,
+    OutputPolicy,
+    output_policy_for,
+    parse_analysis_mode,
+)
 from fasta_input import (
     MAX_FASTA_SOURCE_BYTES,
     InputPreparationError,
     format_bytes,
     prepare_fasta,
+)
+from protected_catalogue import (
+    ProtectedCatalogueError,
+    get_configured_catalogue,
+    get_configured_catalogue_choices,
+    get_configured_catalogue_paths,
+    scan_protected_catalogue_with_progress,
 )
 from sixpack_abscan import (
     DEFAULT_GENETIC_CODE_TABLE,
@@ -92,6 +106,12 @@ def _find_free_port(start: int = 7860, end: int = 7870) -> int:
     raise RuntimeError(f"No free port found in range {start}-{end}.")
 
 
+def _blocked_catalogue_paths() -> list[str]:
+    """Deny Gradio file-route access to every configured private catalogue."""
+
+    return get_configured_catalogue_paths()
+
+
 def _cleanup_previous_runs() -> None:
     if not RUNS_DIR.exists():
         return
@@ -112,6 +132,8 @@ if os.getenv("CLEANUP_RUNS_ON_EXIT", "1") == "1":
 
 
 def _run_scan(
+    analysis_mode: str,
+    catalogue_key: str | None,
     input_mode: str,
     genetic_code_table: int,
     fasta_file: str | None,
@@ -121,12 +143,25 @@ def _run_scan(
     epitope_separator: str,
     progress: gr.Progress = gr.Progress(),  # noqa: B008 - Gradio dependency injection
 ) -> Generator[tuple, None, None]:
-    if not epitope_file:
-        raise gr.Error("Please upload an epitope file (CSV/TSV/XLSX).")
-    if not epitope_column:
-        raise gr.Error("Please select an epitope column from the dropdown.")
+    try:
+        mode = parse_analysis_mode(analysis_mode)
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
+    output_policy = output_policy_for(mode)
 
-    epitope_path = Path(epitope_file)
+    epitope_df: pd.DataFrame | None = None
+    catalogue = None
+    if output_policy is OutputPolicy.FULL:
+        if not epitope_file:
+            raise gr.Error("Please upload an epitope file (CSV/TSV/XLSX).")
+        if not epitope_column:
+            raise gr.Error("Please select an epitope column from the dropdown.")
+        epitope_path = Path(epitope_file)
+    else:
+        try:
+            catalogue = get_configured_catalogue(catalogue_key)
+        except ProtectedCatalogueError as exc:
+            raise gr.Error(str(exc)) from exc
 
     if not fasta_file and not (ncbi_url or "").strip():
         sequence_type = "nucleotide" if input_mode == NUCLEOTIDE_MODE else "protein"
@@ -167,16 +202,23 @@ def _run_scan(
         output_dir = RUNS_DIR / f"run_{run_id}"
         _SESSION_RUN_DIRS.add(output_dir)
 
-        epitope_df = read_epitope_table(epitope_path, epitope_separator)
-        if epitope_column not in epitope_df.columns:
-            raise gr.Error(
-                f"Selected column '{epitope_column}' is not in the epitope file."
+        if output_policy is OutputPolicy.FULL:
+            epitope_df = read_epitope_table(epitope_path, epitope_separator)
+            if epitope_column not in epitope_df.columns:
+                raise gr.Error(
+                    f"Selected column '{epitope_column}' is not in the epitope file."
+                )
+            scan_item_count = (
+                epitope_df[epitope_column]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .ne("")
+                .sum()
             )
-        epitope_count = (
-            epitope_df[epitope_column].dropna().astype(str).str.strip().ne("").sum()
-            if epitope_column in epitope_df.columns
-            else 0
-        )
+        else:
+            assert catalogue is not None
+            scan_item_count = len(catalogue.entries)
 
         empty_df = pd.DataFrame()
         translated_output: Path | None = None
@@ -196,7 +238,14 @@ def _run_scan(
                     f"- FASTA source: `{safe_source_name}`{source_note}\n"
                     f"- Input nucleotide sequences: `{seq_count}`\n"
                     f"{genetic_code_summary}"
-                    f"- Epitopes to scan: `{int(epitope_count)}`"
+                    + (
+                        f"- Epitopes to scan: `{int(scan_item_count)}`"
+                        if output_policy is OutputPolicy.FULL
+                        else (
+                            "- Catalogue antibodies to scan: "
+                            f"`{scan_item_count}`"
+                        )
+                    )
                 ),
                 empty_df,
                 empty_df,
@@ -224,20 +273,33 @@ def _run_scan(
         assert protein_to_scan is not None
         scan_record_count = seq_count * 6 if translated_output else seq_count
 
-        epitope_df = epitope_df.copy()
-        epitope_df["epitope_query"] = epitope_df[epitope_column].apply(
-            normalize_epitope
-        )
-        epitope_df = epitope_df.dropna(subset=["epitope_query"])
-        unique_epitopes = sorted(set(epitope_df["epitope_query"].tolist()))
+        unique_epitopes: list[str] = []
+        if output_policy is OutputPolicy.FULL:
+            assert epitope_df is not None
+            assert epitope_column is not None
+            epitope_df = epitope_df.copy()
+            epitope_df["epitope_query"] = epitope_df[epitope_column].apply(
+                normalize_epitope
+            )
+            epitope_df = epitope_df.dropna(subset=["epitope_query"])
+            unique_epitopes = sorted(set(epitope_df["epitope_query"].tolist()))
 
+        scan_intro = (
+            "Scanning translated/protein sequences for epitope matches.\n\n"
+            if output_policy is OutputPolicy.FULL
+            else "Scanning the protected antibody catalogue.\n\n"
+        )
         yield (
             (
-                "Scanning translated/protein sequences for epitope matches.\n\n"
-                f"- FASTA source: `{safe_source_name}`{source_note}\n"
+                scan_intro
+                + f"- FASTA source: `{safe_source_name}`{source_note}\n"
                 f"- Protein sequences to scan: `{scan_record_count}`\n"
                 f"{genetic_code_summary}"
-                f"- Epitopes to scan: `{len(unique_epitopes)}`"
+                + (
+                    f"- Epitopes to scan: `{len(unique_epitopes)}`"
+                    if output_policy is OutputPolicy.FULL
+                    else f"- Catalogue antibodies to scan: `{scan_item_count}`"
+                )
             ),
             empty_df,
             empty_df,
@@ -246,59 +308,94 @@ def _run_scan(
             None,
         )
 
-        hits_df = pd.DataFrame(
-            columns=["epitope_query", "target_id", "target_description"]
-        )
-        scan_gen = scan_epitopes_with_progress(
-            unique_epitopes,
-            protein_to_scan,
-            total_records=scan_record_count,
-        )
-        while True:
-            try:
-                scanned_records, total_records, _hits_so_far = next(scan_gen)
-                progress(
-                    (scanned_records, total_records),
-                    desc="Scanning protein sequences",
-                )
-            except StopIteration as stop:
-                hits_df = stop.value
-                break
-
-        hits_path = output_dir / "epitope_hits.csv"
-        if hits_df.empty:
+        if output_policy is OutputPolicy.FULL:
             hits_df = pd.DataFrame(
                 columns=["epitope_query", "target_id", "target_description"]
             )
-        hits_df.to_csv(hits_path, index=False)
+            scan_gen = scan_epitopes_with_progress(
+                unique_epitopes,
+                protein_to_scan,
+                total_records=scan_record_count,
+            )
+            while True:
+                try:
+                    scanned_records, total_records, _hits_so_far = next(scan_gen)
+                    progress(
+                        (scanned_records, total_records),
+                        desc="Scanning protein sequences",
+                    )
+                except StopIteration as stop:
+                    hits_df = stop.value
+                    break
 
-        merged = epitope_df.merge(hits_df, on="epitope_query", how="inner")
-        matched_path = output_dir / "matched_epitope_rows.csv"
-        merged.to_csv(matched_path, index=False)
-        translated_path = translated_output
+            hits_path = output_dir / "epitope_hits.csv"
+            if hits_df.empty:
+                hits_df = pd.DataFrame(
+                    columns=["epitope_query", "target_id", "target_description"]
+                )
+            hits_df.to_csv(hits_path, index=False)
 
-        hits_df = pd.read_csv(hits_path)
-        matched_df = pd.read_csv(matched_path)
+            assert epitope_df is not None
+            merged = epitope_df.merge(hits_df, on="epitope_query", how="inner")
+            matched_path = output_dir / "matched_epitope_rows.csv"
+            merged.to_csv(matched_path, index=False)
 
-        summary = (
-            f"Run complete.\n\n"
-            f"- Output directory: `{output_dir}`\n"
-            f"- Unique epitopes scanned: `{len(unique_epitopes)}`\n"
-            f"{genetic_code_summary}"
-            f"- Total hits: `{len(hits_df)}`\n"
-            f"- Matched metadata rows: `{len(matched_df)}`"
-        )
+            hits_df = pd.read_csv(hits_path)
+            matched_df = pd.read_csv(matched_path)
+            summary = (
+                f"Run complete.\n\n"
+                f"- Output directory: `{output_dir}`\n"
+                f"- Unique epitopes scanned: `{len(unique_epitopes)}`\n"
+                f"{genetic_code_summary}"
+                f"- Total hits: `{len(hits_df)}`\n"
+                f"- Matched metadata rows: `{len(matched_df)}`"
+            )
+            progress(1, desc="Run complete")
+            yield (
+                summary,
+                hits_df,
+                matched_df,
+                str(hits_path),
+                str(matched_path),
+                str(translated_output) if translated_output else None,
+            )
+        else:
+            assert catalogue is not None
+            restricted_df = pd.DataFrame()
+            target_match_count = 0
+            scan_gen = scan_protected_catalogue_with_progress(
+                catalogue,
+                protein_to_scan,
+                total_records=scan_record_count,
+            )
+            while True:
+                try:
+                    scanned_records, total_records, target_match_count = next(scan_gen)
+                    progress(
+                        (scanned_records, total_records),
+                        desc="Scanning protein sequences",
+                    )
+                except StopIteration as stop:
+                    restricted_df = stop.value
+                    break
 
-        translated_download = str(translated_path) if translated_path else None
-        progress(1, desc="Run complete")
-        yield (
-            summary,
-            hits_df,
-            matched_df,
-            str(hits_path),
-            str(matched_path),
-            translated_download,
-        )
+            restricted_path = output_dir / "catalogue_matches.csv"
+            restricted_df.to_csv(restricted_path, index=False)
+            summary = (
+                "Protected catalogue scan complete.\n\n"
+                f"{genetic_code_summary}"
+                f"- Positive antibody–target matches: `{target_match_count}`\n"
+                "- Result disclosure: antibody metadata and matched target identifiers only"
+            )
+            progress(1, desc="Run complete")
+            yield (
+                summary,
+                restricted_df,
+                empty_df,
+                str(restricted_path),
+                None,
+                str(translated_output) if translated_output else None,
+            )
     finally:
         prepared_fasta.cleanup()
 
@@ -343,11 +440,45 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
     return gr.update(choices=headers, value=default_column, interactive=True)
 
 
+def _set_analysis_mode(analysis_mode: str):
+    """Show only the inputs and result surfaces permitted for the mode."""
+
+    try:
+        mode = parse_analysis_mode(analysis_mode)
+    except ValueError:
+        mode = AnalysisMode.PROTECTED_CATALOGUE
+    user_mode = mode is AnalysisMode.USER_SUPPLIED
+    return (
+        gr.update(visible=user_mode),
+        gr.update(visible=not user_mode),
+        gr.update(
+            label="Epitope hits" if user_mode else "Protected catalogue matches",
+            value=None,
+        ),
+        gr.update(visible=user_mode, value=None),
+        gr.update(
+            label=(
+                "Download: epitope_hits.csv"
+                if user_mode
+                else "Download: catalogue_matches.csv"
+            ),
+            value=None,
+        ),
+        gr.update(visible=user_mode, value=None),
+        gr.update(visible=True, value=None),
+    )
+
+
 def _update_genetic_code_visibility(input_mode: str):
     return gr.update(visible=input_mode == NUCLEOTIDE_MODE)
 
 
 def build_app() -> gr.Blocks:
+    try:
+        catalogue_choices = get_configured_catalogue_choices()
+    except ProtectedCatalogueError:
+        catalogue_choices = []
+
     with gr.Blocks(title="SixPack-AbScan", css=APP_CSS, head=APP_HEAD) as app:
         gr.Markdown(
             """
@@ -361,25 +492,55 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
 """
         )
 
-        gr.Markdown("### Antibody information")
+        gr.Markdown("### Analysis mode")
 
-        with gr.Row():
-            epitope_file = gr.File(
-                label="Upload here your file with the list of epitopes to search",
-                file_count="single",
-                type="filepath",
-            )
+        analysis_mode = gr.Radio(
+            choices=ANALYSIS_MODE_CHOICES,
+            value=AnalysisMode.USER_SUPPLIED.value,
+            label="Choose how antibody epitopes are supplied",
+        )
 
-        with gr.Row():
-            epitope_column = gr.Dropdown(
-                label="Epitope column",
-                choices=[],
-                value=None,
-                interactive=False,
+        with gr.Group(visible=True) as user_epitope_inputs:
+            gr.Markdown("### Antibody information")
+
+            with gr.Row():
+                epitope_file = gr.File(
+                    label="Upload here your file with the list of epitopes to search",
+                    file_count="single",
+                    type="filepath",
+                )
+
+            with gr.Row():
+                epitope_column = gr.Dropdown(
+                    label="Epitope column",
+                    choices=[],
+                    value=None,
+                    interactive=False,
+                )
+                epitope_separator = gr.Textbox(
+                    label="CSV/TSV separator",
+                    value=";",
+                )
+
+        with gr.Group(visible=False) as protected_catalogue_information:
+            gr.Markdown(
+                "### Protected antibody catalogue\n"
+                "Choose a server-side catalogue to scan in full. "
+                "Catalogue results contain only manufacturer, catalogue number, "
+                "antibody name, target ID, and target description for positive hits. "
+                "Each matching FASTA record is reported separately, including isoforms. "
+                "Protected sequences, "
+                "matched peptides, target coordinates, alignments, and private files "
+                "are never included in catalogue results or sent to the browser. "
+                "A generated six-frame FASTA remains downloadable because it is "
+                "derived only from your target input and has no catalogue annotations."
             )
-            epitope_separator = gr.Textbox(
-                label="CSV/TSV separator",
-                value=";",
+            catalogue_key = gr.Dropdown(
+                choices=catalogue_choices,
+                value=catalogue_choices[0][1] if catalogue_choices else None,
+                label="Antibody catalogue",
+                info="The displayed name is a public label; private paths and epitopes remain server-side.",
+                interactive=bool(catalogue_choices),
             )
 
         gr.Markdown("### Crossreactivity prediction")
@@ -439,6 +600,8 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
         run_button.click(
             fn=_run_scan,
             inputs=[
+                analysis_mode,
+                catalogue_key,
                 input_mode,
                 genetic_code_table,
                 fasta_file,
@@ -457,6 +620,21 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
             ],
             show_progress="minimal",
             show_progress_on=summary,
+        )
+
+        analysis_mode.change(
+            fn=_set_analysis_mode,
+            inputs=[analysis_mode],
+            outputs=[
+                user_epitope_inputs,
+                protected_catalogue_information,
+                hits_table,
+                matched_table,
+                hits_download,
+                matched_download,
+                translated_download,
+            ],
+            show_progress="hidden",
         )
 
         fasta_file.upload(
@@ -523,6 +701,7 @@ def main() -> None:
             server_port=server_port,
             root_path=root_path,
             max_file_size=MAX_FASTA_SOURCE_BYTES,
+            blocked_paths=_blocked_catalogue_paths(),
         )
     except Exception:
         print("Application startup failed:", flush=True)
