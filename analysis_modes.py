@@ -20,9 +20,9 @@ class OutputPolicy(str, Enum):
 
 
 ANALYSIS_MODE_CHOICES = [
-    ("Upload my epitope list (detailed results)", AnalysisMode.USER_SUPPLIED.value),
+    ("Upload my epitope list", AnalysisMode.USER_SUPPLIED.value),
     (
-        "Scan the protected antibody catalogue (restricted results)",
+        "Scan a pre-loaded commercial antibody catalogue",
         AnalysisMode.PROTECTED_CATALOGUE.value,
     ),
 ]

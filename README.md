@@ -64,8 +64,8 @@ Then open the local URL printed in the terminal (typically `http://127.0.0.1:786
 In the app:
 1. Choose an analysis mode:
    - `Upload my epitope list` keeps the existing detailed workflow and outputs.
-   - `Scan the protected antibody catalogue` scans every server-side catalogue
-     antibody and returns restricted metadata for positive hits only.
+   - `Scan a pre-loaded commercial antibody catalogue` scans every server-side
+     catalogue antibody and returns restricted metadata for positive hits only.
 2. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
 3. For nucleotide input, choose the appropriate NCBI genetic code table. The
    default is table 1 (Standard).

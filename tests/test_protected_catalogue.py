@@ -289,6 +289,7 @@ class ProtectedCatalogueTests(unittest.TestCase):
             self.assertIn("target_id,target_description", published)
             self.assertIn("protein-1", published)
             self.assertIn("Positive antibody–target matches: `1`", summary)
+            self.assertNotIn("Result disclosure", summary)
 
     def test_protected_nucleotide_run_keeps_genetic_code_and_translation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -384,8 +384,7 @@ def _run_scan(
             summary = (
                 "Protected catalogue scan complete.\n\n"
                 f"{genetic_code_summary}"
-                f"- Positive antibody–target matches: `{target_match_count}`\n"
-                "- Result disclosure: antibody metadata and matched target identifiers only"
+                f"- Positive antibody–target matches: `{target_match_count}`"
             )
             progress(1, desc="Run complete")
             yield (
@@ -525,21 +524,15 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
         with gr.Group(visible=False) as protected_catalogue_information:
             gr.Markdown(
                 "### Protected antibody catalogue\n"
-                "Choose a server-side catalogue to scan in full. "
-                "Catalogue results contain only manufacturer, catalogue number, "
-                "antibody name, target ID, and target description for positive hits. "
-                "Each matching FASTA record is reported separately, including isoforms. "
-                "Protected sequences, "
-                "matched peptides, target coordinates, alignments, and private files "
-                "are never included in catalogue results or sent to the browser. "
-                "A generated six-frame FASTA remains downloadable because it is "
-                "derived only from your target input and has no catalogue annotations."
+                "Choose the pre-loaded commercial antibody catalogue. "
+                "The exact epitope mapping information is confidential, hence not "
+                "available for download, but is available to the app and used in the "
+                "back-end for cross-reactivity prediction."
             )
             catalogue_key = gr.Dropdown(
                 choices=catalogue_choices,
                 value=catalogue_choices[0][1] if catalogue_choices else None,
-                label="Antibody catalogue",
-                info="The displayed name is a public label; private paths and epitopes remain server-side.",
+                label="Choose an antibody catalogue from the drop-down menu",
                 interactive=bool(catalogue_choices),
             )
 

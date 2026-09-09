@@ -50,6 +50,16 @@ class GradioAppConfigurationTests(unittest.TestCase):
         self.assertEqual(
             analysis_modes[0]["props"]["value"], AnalysisMode.USER_SUPPLIED.value
         )
+        self.assertEqual(
+            analysis_modes[0]["props"]["choices"],
+            [
+                ("Upload my epitope list", AnalysisMode.USER_SUPPLIED.value),
+                (
+                    "Scan a pre-loaded commercial antibody catalogue",
+                    AnalysisMode.PROTECTED_CATALOGUE.value,
+                ),
+            ],
+        )
 
         visibility_dependency = next(
             dependency
@@ -57,6 +67,31 @@ class GradioAppConfigurationTests(unittest.TestCase):
             if dependency.get("api_name") == "_set_analysis_mode"
         )
         self.assertEqual(visibility_dependency["show_progress"], "hidden")
+
+    def test_uses_requested_catalogue_copy(self) -> None:
+        catalogue_dropdown = next(
+            component
+            for component in self.config["components"]
+            if component.get("type") == "dropdown"
+            and component.get("props", {}).get("label")
+            == "Choose an antibody catalogue from the drop-down menu"
+        )
+        self.assertNotIn("info", catalogue_dropdown["props"])
+
+        markdown_values = [
+            component.get("props", {}).get("value", "")
+            for component in self.config["components"]
+            if component.get("type") == "markdown"
+        ]
+        self.assertTrue(
+            any(
+                "The exact epitope mapping information is confidential, hence not "
+                "available for download, but is available to the app and used in the "
+                "back-end for cross-reactivity prediction."
+                in value
+                for value in markdown_values
+            )
+        )
 
     def test_has_nucleotide_genetic_code_dropdown(self) -> None:
         genetic_code_dropdowns = [
