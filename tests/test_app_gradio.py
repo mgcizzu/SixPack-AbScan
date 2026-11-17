@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+from collections import Counter
 import os
 import tempfile
 import unittest
@@ -11,7 +13,18 @@ os.environ["CLEANUP_RUNS_ON_EXIT"] = "0"
 
 import app_gradio  # noqa: E402
 from analysis_modes import AnalysisMode  # noqa: E402
-from app_gradio import NUCLEOTIDE_MODE, _run_scan, build_app  # noqa: E402
+from app_gradio import (  # noqa: E402
+    DEMO_EPITOPE_FILE,
+    DEMO_EXPECTED_HITS,
+    DMEL_PROTEOME_URL,
+    NUCLEOTIDE_MODE,
+    PROTEIN_MODE,
+    PUBLIC_DSHB_CATALOGUE,
+    _load_dmel_demo,
+    _load_epitope_columns,
+    _run_scan,
+    build_app,
+)
 
 
 class GradioAppConfigurationTests(unittest.TestCase):
@@ -142,6 +155,124 @@ class GradioAppConfigurationTests(unittest.TestCase):
                 dependency["show_progress"] == "hidden"
                 for dependency in column_dependencies
             )
+        )
+
+    def test_includes_help_tutorial_examples_and_license(self) -> None:
+        markdown_values = [
+            component.get("props", {}).get("value", "")
+            for component in self.config["components"]
+            if component.get("type") == "markdown"
+        ]
+        combined_markdown = "\n".join(markdown_values)
+
+        self.assertIn("What the application does", combined_markdown)
+        self.assertIn(
+            "Worked example: DSHB antibodies against Drosophila proteins",
+            combined_markdown,
+        )
+        self.assertIn("MIT License", combined_markdown)
+        self.assertIn("free of charge for non-commercial use", combined_markdown)
+        self.assertIn("Load demo data", combined_markdown)
+        self.assertIn("13 isoform-level rows", combined_markdown)
+        self.assertIn("Optionally, download the test files", combined_markdown)
+        self.assertNotIn(
+            "not experimentally validated cross-reactivity", combined_markdown
+        )
+        self.assertNotIn("Load quick demo", combined_markdown)
+        self.assertNotIn("Try the Drosophila demo", combined_markdown)
+
+        demo_buttons = [
+            component
+            for component in self.config["components"]
+            if component.get("type") == "button"
+            and component.get("props", {}).get("value") == "Load demo data"
+        ]
+        self.assertEqual(len(demo_buttons), 1)
+
+        download_labels = {
+            component.get("props", {}).get("label")
+            for component in self.config["components"]
+            if component.get("type") == "downloadbutton"
+        }
+        self.assertIn("Download demo DSHB subset", download_labels)
+        self.assertIn("Download expected Dmel hits", download_labels)
+        self.assertNotIn("Download complete DSHB catalogue", download_labels)
+
+        dependency_names = {
+            dependency.get("api_name")
+            for dependency in self.config["dependencies"]
+        }
+        self.assertIn("_load_dmel_demo", dependency_names)
+
+
+class BundledExampleTests(unittest.TestCase):
+    def test_public_documentation_uses_current_demo_controls(self) -> None:
+        documentation = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                Path("README.md"),
+                Path("docs/user-guide.md"),
+                Path("docs/tutorial.md"),
+            )
+        )
+
+        self.assertIn("Load demo data", documentation)
+        self.assertNotIn("Load Dmel demo", documentation)
+        self.assertNotIn("Try the Drosophila demo", documentation)
+        self.assertNotIn(
+            "provides the complete public 49-record DSHB catalogue",
+            documentation,
+        )
+
+    def test_example_files_are_present(self) -> None:
+        self.assertTrue(PUBLIC_DSHB_CATALOGUE.is_file())
+        self.assertTrue(DEMO_EPITOPE_FILE.is_file())
+        self.assertTrue(DEMO_EXPECTED_HITS.is_file())
+
+    def test_public_catalogue_has_the_documented_records(self) -> None:
+        with PUBLIC_DSHB_CATALOGUE.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        self.assertEqual(len(rows), 49)
+        self.assertEqual(
+            set(rows[0]),
+            {
+                "antibody_id",
+                "manufacturer",
+                "catalog_number",
+                "antibody_name",
+                "epitope_sequence",
+            },
+        )
+
+        column_update = _load_epitope_columns(
+            str(PUBLIC_DSHB_CATALOGUE),
+            ",",
+        )
+        self.assertEqual(column_update["value"], "epitope_sequence")
+
+    def test_demo_loader_selects_the_full_proteome(self) -> None:
+        update = _load_dmel_demo()
+
+        self.assertEqual(update[0], AnalysisMode.USER_SUPPLIED.value)
+        self.assertEqual(update[8], PROTEIN_MODE)
+        self.assertIsNone(update[10])
+        self.assertEqual(update[12], DMEL_PROTEOME_URL)
+        self.assertEqual(update[13], str(DEMO_EPITOPE_FILE))
+        self.assertEqual(update[15], ",")
+
+    def test_expected_proteome_result_has_13_documented_hits(self) -> None:
+        with DEMO_EXPECTED_HITS.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        self.assertEqual(len(rows), 13)
+        self.assertEqual(
+            Counter(row["epitope_query"] for row in rows),
+            {
+                "ELGLNEAQIKI": 5,
+                "DPKELRRWLREMENKLESSPTITELTLFGNAELQRHLAVHS": 4,
+                "FDIGLSRSMGLGVPPH": 4,
+            },
         )
 
 

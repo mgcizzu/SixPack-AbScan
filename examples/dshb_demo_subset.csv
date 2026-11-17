@@ -1,0 +1,4 @@
+antibody_id,manufacturer,catalog_number,antibody_name,epitope_sequence
+dshb:4D9 anti-engrailed/invected,DSHB,4D9 anti-engrailed/invected,Engrailed/invected gene products,ELGLNEAQIKI
+dshb:KLAR-N 9E1B,DSHB,KLAR-N 9E1B,klarsicht,DPKELRRWLREMENKLESSPTITELTLFGNAELQRHLAVHS
+dshb:Seven-up 2D3,DSHB,Seven-up 2D3,Seven-up,FDIGLSRSMGLGVPPH

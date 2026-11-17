@@ -1,6 +1,21 @@
 # SixPack-AbScan
 
-A command-line tool to predict antibody cross-reactivity on non-target species by exact epitope matching.
+A web application and command-line tool for predicting possible antibody
+cross-reactivity on non-target species by exact epitope matching.
+
+## Documentation, tutorial, and examples
+
+- [User guide](docs/user-guide.md): input requirements, workflow, output
+  interpretation, limitations, privacy, and citation.
+- [Worked tutorial](docs/tutorial.md): a step-by-step DSHB/Drosophila example
+  with expected full-proteome results and a command-line equivalent.
+- [Example files](examples): the public 49-record DSHB catalogue, a curated
+  three-antibody subset, and the expected 13-row Drosophila proteome result.
+
+The web app also contains expandable **Help & documentation** and **Tutorial &
+example downloads** sections. The tutorial panel's **Load demo data** button
+populates the form so a complete test requires only two clicks: load the
+example, then run the scan.
 
 ## What It Does
 
@@ -26,6 +41,16 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## Drosophila demonstration
+
+Start the web app, open **Tutorial & example downloads**, select **Load demo
+data**, and then select **Run Scan**. The app loads a curated three-antibody
+DSHB subset and downloads the approximately 9.8 MB, version-pinned NCBI
+Drosophila reference proteome.
+No manual file preparation is required. Follow the
+[complete tutorial](docs/tutorial.md) for settings, expected results, and the
+command-line equivalent.
 
 ## Usage
 
@@ -62,18 +87,21 @@ python app_gradio.py
 Then open the local URL printed in the terminal (typically `http://127.0.0.1:7860`).
 
 In the app:
-1. Choose an analysis mode:
+
+1. Optionally expand the in-app help. To run the example, expand **Tutorial &
+   example downloads**, select **Load demo data**, and then select **Run Scan**.
+2. Choose an analysis mode:
    - `Upload my epitope list` keeps the existing detailed workflow and outputs.
    - `Scan a pre-loaded commercial antibody catalogue` scans every server-side
      catalogue antibody and returns restricted metadata for positive hits only.
-2. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
-3. For nucleotide input, choose the appropriate NCBI genetic code table. The
+3. Choose input mode (`Nucleotide FASTA` or `Protein FASTA`).
+4. For nucleotide input, choose the appropriate NCBI genetic code table. The
    default is table 1 (Standard).
-4. Upload a plain/gzipped sequence FASTA and, for uploaded-list mode, an epitope
+5. Upload a plain/gzipped sequence FASTA and, for uploaded-list mode, an epitope
    table; or paste a direct `https://*.ncbi.nlm.nih.gov/...` FASTA URL instead
    of uploading the sequence.
-5. Set epitope column/separator if needed.
-6. Run the scan, follow the preparation/translation/search progress, inspect the
+6. Set epitope column/separator if needed.
+7. Run the scan, follow the preparation/translation/search progress, inspect the
    tables, and download output files.
 
 ### Protected catalogue configuration
@@ -230,6 +258,18 @@ the restricted fields documented above for positive hits only.
 - Nucleotide six-frame translation uses NCBI genetic code table 1 by default.
   Select another table in the Gradio app or pass `--genetic-code TABLE_ID` to
   the CLI when required by the source organism or organelle.
+
+## License and access
+
+SixPack-AbScan is distributed under the [MIT License](LICENSE). The public web
+service is available free of charge for non-commercial use. The MIT license also
+permits reuse, modification, distribution, and commercial use of the software,
+provided its copyright and permission notices are retained. The software is
+provided without warranty; see the license text for the complete terms.
+
+The public DSHB catalogue in `examples/` is research data rather than software
+and is not covered by the MIT license. See the
+[example data README](examples/README.md) for provenance and reuse information.
 
 ## Legacy Notebook
 

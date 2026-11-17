@@ -47,6 +47,16 @@ from sixpack_abscan import (
 
 RUNS_DIR = Path("runs")
 _SESSION_RUN_DIRS: set[Path] = set()
+APP_DIR = Path(__file__).resolve().parent
+EXAMPLES_DIR = APP_DIR / "examples"
+PUBLIC_DSHB_CATALOGUE = EXAMPLES_DIR / "dshb_updated_2026-09-10.csv"
+DEMO_EPITOPE_FILE = EXAMPLES_DIR / "dshb_demo_subset.csv"
+DEMO_EXPECTED_HITS = EXAMPLES_DIR / "expected_dmel_proteome_hits.csv"
+DMEL_PROTEOME_URL = (
+    "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/215/"
+    "GCF_000001215.4_Release_6_plus_ISO1_MT/"
+    "GCF_000001215.4_Release_6_plus_ISO1_MT_protein.faa.gz"
+)
 NUCLEOTIDE_MODE = "Nucleotide FASTA (will be 6-frame translated automatically)"
 PROTEIN_MODE = "Protein FASTA (precomputed proteome)"
 FASTA_FILE_TYPES = [".fa", ".fasta", ".fna", ".faa", ".fas", ".gz"]
@@ -80,6 +90,22 @@ APP_CSS = """
 .gradio-container .message {
     font-size: 1.05rem;
 }
+
+.gradio-container .demo-status {
+    color: var(--body-text-color-subdued);
+    font-size: 0.9rem !important;
+}
+
+.gradio-container .demo-status p {
+    font-size: inherit !important;
+    margin: 0.35rem 0 0;
+}
+
+.gradio-container .example-download,
+.gradio-container .example-download button,
+.gradio-container .example-download a {
+    font-weight: 400 !important;
+}
 """
 APP_HEAD = """
 <meta name="description" content="SixPack-AbScan predicts crossreactivity of monoclonal antibodies on non-target species by searching epitope sequences against nucleotide or protein FASTA inputs.">
@@ -91,6 +117,63 @@ APP_HEAD = """
 <meta name="twitter:title" content="SixPack-AbScan">
 <meta name="twitter:description" content="Predict crossreactivity of monoclonal antibodies on non-target species.">
 <meta name="twitter:image" content="https://images.unsplash.com/photo-1707863081130-7048e715688f?auto=format&fit=crop&fm=jpg&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&q=60&w=1200">
+"""
+
+HELP_MARKDOWN = """
+### What the application does
+
+SixPack-AbScan finds **exact, linear peptide matches** between antibody epitopes
+and target sequences. It either scans a protein FASTA directly or translates
+each DNA record in all six reading frames before scanning.
+
+### Required inputs
+
+1. Choose whether to upload your own epitope list or scan a server-side
+   commercial catalogue.
+2. Choose **Nucleotide FASTA** for DNA or **Protein FASTA** for translated
+   sequences. DNA input also requires the appropriate NCBI genetic code.
+3. Upload a FASTA/FASTA.GZ file or provide a direct HTTPS FASTA URL hosted by
+   NCBI. For your own epitope list, upload CSV, TSV, or Excel; then select the
+   peptide column and, for delimited text, its separator.
+4. Select **Run Scan**, inspect the result tables, and download the outputs.
+
+`epitope_hits.csv` contains one row per matched epitope and target record.
+`matched_epitope_rows.csv` retains the matching metadata from the uploaded
+table. DNA runs also provide the six-frame translation. Protected-catalogue
+runs provide a restricted `catalogue_matches.csv` that does not disclose
+licensed epitope sequences.
+
+### How to interpret the results
+
+A match establishes sequence identity only; it does **not** establish antibody
+binding. The method does not model substitutions, partial/gapped matches,
+post-translational modifications, conformational epitopes, accessibility, or
+expression. Results depend on the completeness and quality of the supplied
+assembly or proteome and should be interpreted in biological context.
+
+[Full user guide](https://github.com/mgcizzu/SixPack-AbScan/blob/main/docs/user-guide.md)
+"""
+
+TUTORIAL_INTRO_MARKDOWN = """
+### Worked example: DSHB antibodies against Drosophila proteins
+
+Select **Load demo data** below and then **Run Scan**. The app loads three
+public DSHB antibody records and the version-pinned *Drosophila melanogaster*
+NCBI reference proteome (about 9.8 MB compressed). The form is configured for
+protein input, the `epitope_sequence` column, and a comma separator.
+"""
+
+TUTORIAL_DETAILS_MARKDOWN = """
+The expected hit table has **13 isoform-level rows** across three antibodies:
+
+| DSHB antibody | Matching proteins |
+| --- | ---: |
+| `4D9 anti-engrailed/invected` | 5 |
+| `KLAR-N 9E1B` | 4 |
+| `Seven-up 2D3` | 4 |
+
+Optionally, download the test files using the buttons below to test a manual
+upload. [Open the complete tutorial](https://github.com/mgcizzu/SixPack-AbScan/blob/main/docs/tutorial.md).
 """
 
 
@@ -433,8 +516,13 @@ def _load_epitope_columns(epitope_file: str | None, epitope_separator: str):
     if not headers:
         return gr.update(choices=[], value=None, interactive=False)
 
-    default_column = (
-        "epitope_specificity" if "epitope_specificity" in headers else headers[0]
+    default_column = next(
+        (
+            column
+            for column in ("epitope_specificity", "epitope_sequence")
+            if column in headers
+        ),
+        headers[0],
     )
     return gr.update(choices=headers, value=default_column, interactive=True)
 
@@ -468,6 +556,46 @@ def _set_analysis_mode(analysis_mode: str):
     )
 
 
+def _load_dmel_demo():
+    """Populate the form with the curated DSHB/Drosophila demonstration."""
+
+    if not DEMO_EPITOPE_FILE.is_file():
+        raise gr.Error(
+            f"Bundled example file is missing: {DEMO_EPITOPE_FILE.name}"
+        )
+
+    mode_updates = _set_analysis_mode(AnalysisMode.USER_SUPPLIED.value)
+    return (
+        AnalysisMode.USER_SUPPLIED.value,
+        *mode_updates,
+        PROTEIN_MODE,
+        gr.update(value=DEFAULT_GENETIC_CODE_TABLE, visible=False),
+        None,
+        (
+            "The version-pinned NCBI reference proteome will be downloaded when "
+            "the scan starts."
+        ),
+        DMEL_PROTEOME_URL,
+        str(DEMO_EPITOPE_FILE),
+        gr.update(
+            choices=[
+                "antibody_id",
+                "manufacturer",
+                "catalog_number",
+                "antibody_name",
+                "epitope_sequence",
+            ],
+            value="epitope_sequence",
+            interactive=True,
+        ),
+        ",",
+        "",
+        (
+            'Demo data loaded. Review the settings, then select "Run Scan".'
+        ),
+    )
+
+
 def _update_genetic_code_visibility(input_mode: str):
     return gr.update(visible=input_mode == NUCLEOTIDE_MODE)
 
@@ -490,6 +618,31 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
 </span>
 """
         )
+
+        with gr.Accordion("Help & documentation", open=False):
+            gr.Markdown(HELP_MARKDOWN)
+
+        with gr.Accordion("Tutorial & example downloads", open=False):
+            gr.Markdown(TUTORIAL_INTRO_MARKDOWN)
+            load_dmel_demo = gr.Button(
+                "Load demo data",
+                variant="primary",
+            )
+            example_status = gr.Markdown(elem_classes=["demo-status"])
+            gr.Markdown(TUTORIAL_DETAILS_MARKDOWN)
+            with gr.Row():
+                gr.DownloadButton(
+                    "Download demo DSHB subset",
+                    value=str(DEMO_EPITOPE_FILE),
+                    size="sm",
+                    elem_classes=["example-download"],
+                )
+                gr.DownloadButton(
+                    "Download expected Dmel hits",
+                    value=str(DEMO_EXPECTED_HITS),
+                    size="sm",
+                    elem_classes=["example-download"],
+                )
 
         gr.Markdown("### Analysis mode")
 
@@ -656,11 +809,49 @@ For the screening of large target sequence files (>2-3 Gb) we recommend the use 
             show_progress="hidden",
         )
 
+        example_outputs = [
+            analysis_mode,
+            user_epitope_inputs,
+            protected_catalogue_information,
+            hits_table,
+            matched_table,
+            hits_download,
+            matched_download,
+            translated_download,
+            input_mode,
+            genetic_code_table,
+            fasta_file,
+            fasta_upload_status,
+            ncbi_url,
+            epitope_file,
+            epitope_column,
+            epitope_separator,
+            summary,
+            example_status,
+        ]
+        load_dmel_demo.click(
+            fn=_load_dmel_demo,
+            inputs=[],
+            outputs=example_outputs,
+            show_progress="hidden",
+        )
+
         gr.Markdown(
-            "## How to cite this app.\n"
-            "Please cite this web as: Grillo, 2026. SixPack-AbScan: "
-            "predict crossreactivity of monoclonal antibodies on non-target species. "
-            "DOI: https://doi.org/10.82595/scilifelab.4c3a-tp57"
+            "## Citation and license\n"
+            "Please cite: Grillo, M. (2026). *SixPack-AbScan: predict "
+            "crossreactivity of monoclonal antibodies on non-target species.* "
+            "[https://doi.org/10.82595/scilifelab.4c3a-tp57]"
+            "(https://doi.org/10.82595/scilifelab.4c3a-tp57).\n\n"
+            "SixPack-AbScan is distributed under the "
+            "[MIT License](https://github.com/mgcizzu/SixPack-AbScan/blob/main/LICENSE). "
+            "The public web service is available free of charge for "
+            "non-commercial use. The MIT license also permits reuse, "
+            "modification, distribution, and commercial use of the software "
+            "subject to its notice conditions. The downloadable DSHB catalogue "
+            "is research data rather than software; its provenance and reuse "
+            "notice are provided in the "
+            "[example data documentation]"
+            "(https://github.com/mgcizzu/SixPack-AbScan/blob/main/examples/README.md)."
         )
 
     app.queue()
